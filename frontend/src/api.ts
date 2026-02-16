@@ -1,4 +1,4 @@
-import { Chat, Message, APIKeyInfo, MergeRequest, StreamChunk } from './types';
+import { Chat, Message, APIKeyInfo, MergeRequest, StreamChunk, Attachment } from './types';
 
 const BASE_URL = '/api';
 
@@ -99,10 +99,28 @@ export const api = {
   },
 
   // Streaming completion
-  streamCompletion(chatId: string, content: string) {
+  streamCompletion(chatId: string, content: string, attachmentIds?: string[]) {
     return streamFetch(`${BASE_URL}/chats/${chatId}/completions`, {
       content,
+      attachment_ids: attachmentIds,
     });
+  },
+
+  // Attachments
+  async uploadAttachments(files: File[]): Promise<Attachment[]> {
+    const formData = new FormData();
+    files.forEach(file => formData.append('files', file));
+
+    const response = await fetch(`${BASE_URL}/attachments`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!response.ok) throw new Error('Failed to upload attachments');
+    return response.json();
+  },
+
+  getAttachmentUrl(attachmentId: string): string {
+    return `${BASE_URL}/attachments/${attachmentId}`;
   },
 
   // API Keys

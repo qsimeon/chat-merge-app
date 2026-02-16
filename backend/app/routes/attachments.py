@@ -43,22 +43,13 @@ async def get_db() -> AsyncSession:
         yield session
 
 
-@router.post("/messages/{message_id}/attachments", response_model=List[AttachmentResponse])
+@router.post("/attachments", response_model=List[AttachmentResponse])
 async def upload_attachments(
-    message_id: str,
     files: List[UploadFile] = File(...),
     db: AsyncSession = Depends(get_db)
 ):
-    """Upload one or more file attachments to a message"""
+    """Upload one or more file attachments (without message association yet)"""
     try:
-        # Verify message exists
-        result = await db.execute(select(Message).where(Message.id == message_id))
-        message = result.scalar_one_or_none()
-        if not message:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Message {message_id} not found"
-            )
 
         attachments = []
 
@@ -91,9 +82,10 @@ async def upload_attachments(
             async with aiofiles.open(storage_path, 'wb') as f:
                 await f.write(content)
 
-            # Create attachment record
+            # Create attachment record (message_id will be set later during completion)
+            # We need a temporary placeholder - using empty string for now
             attachment = Attachment(
-                message_id=message_id,
+                message_id="",  # Will be updated when message is created
                 file_name=file.filename,
                 file_type=file.content_type,
                 file_size=file_size,

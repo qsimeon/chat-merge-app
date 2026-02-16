@@ -29,7 +29,7 @@ export interface AppState {
   createChat: (provider: string, model: string) => Promise<void>;
   deleteChat: (chatId: string) => Promise<void>;
   updateChatTitle: (chatId: string, title: string) => Promise<void>;
-  sendMessage: (content: string) => Promise<void>;
+  sendMessage: (content: string, files?: File[]) => Promise<void>;
   loadApiKeys: () => Promise<void>;
 
   // Merge
@@ -137,12 +137,19 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  sendMessage: async (content: string) => {
+  sendMessage: async (content: string, files?: File[]) => {
     const state = get();
     if (!state.currentChatId) return;
 
     try {
       set({ error: null, isStreaming: true, streamingContent: '', streamingReasoning: '' });
+
+      // Upload files first if provided
+      let attachmentIds: string[] | undefined;
+      if (files && files.length > 0) {
+        const attachments = await api.uploadAttachments(files);
+        attachmentIds = attachments.map(att => att.id);
+      }
 
       // Add user message optimistically
       const userMessage: Message = {
@@ -152,6 +159,15 @@ export const useStore = create<AppState>((set, get) => ({
         content,
         reasoning_trace: null,
         created_at: new Date().toISOString(),
+        attachments: attachmentIds ? files?.map((file, idx) => ({
+          id: attachmentIds[idx],
+          message_id: '',
+          file_name: file.name,
+          file_type: file.type,
+          file_size: file.size,
+          storage_path: '',
+          created_at: new Date().toISOString(),
+        })) : [],
       };
 
       set((state) => ({
@@ -162,7 +178,7 @@ export const useStore = create<AppState>((set, get) => ({
       let assistantReasoning = '';
 
       // Stream completion
-      for await (const chunk of api.streamCompletion(state.currentChatId, content)) {
+      for await (const chunk of api.streamCompletion(state.currentChatId, content, attachmentIds)) {
         if (chunk.type === 'content') {
           assistantContent += chunk.data;
           set((state) => ({

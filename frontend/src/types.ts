@@ -10,6 +10,16 @@ export interface Chat {
   messages?: Message[];
 }
 
+export interface Attachment {
+  id: string;
+  message_id: string;
+  file_name: string;
+  file_type: string;
+  file_size: number;
+  storage_path: string;
+  created_at: string;
+}
+
 export interface Message {
   id: string;
   chat_id: string;
@@ -17,6 +27,7 @@ export interface Message {
   content: string;
   reasoning_trace: string | null;
   created_at: string;
+  attachments?: Attachment[];
 }
 
 export interface APIKeyInfo {

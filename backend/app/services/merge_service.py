@@ -1,9 +1,11 @@
 import logging
+import shutil
+from pathlib import Path
 from typing import AsyncGenerator, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
 
-from app.models import MergeHistory
+from app.models import MergeHistory, Attachment
 from app.providers.factory import create_provider
 from app.providers.base import StreamChunk
 from app.services.chat_service import get_chat, get_messages, create_chat, create_message
@@ -134,12 +136,37 @@ async def merge_chats(
                 )
 
             # Copy the message with its full reasoning trace
-            await create_message(
+            new_message = await create_message(
                 db, merged_chat.id,
                 msg.role,
                 msg.content,
                 reasoning_trace=msg.reasoning_trace,
             )
+
+            # Copy attachments if the message has any
+            if msg.attachments and new_message:
+                for att in msg.attachments:
+                    # Copy file to new location
+                    source_path = Path(att.storage_path)
+                    if source_path.exists():
+                        # Create new filename to avoid collisions
+                        from uuid import uuid4
+                        new_filename = f"{uuid4()}{source_path.suffix}"
+                        new_path = source_path.parent / new_filename
+
+                        # Copy file
+                        shutil.copy2(source_path, new_path)
+
+                        # Create new attachment record
+                        new_attachment = Attachment(
+                            message_id=new_message.id,
+                            file_name=att.file_name,
+                            file_type=att.file_type,
+                            file_size=att.file_size,
+                            storage_path=str(new_path)
+                        )
+                        db.add(new_attachment)
+
             copied += 1
 
         yield StreamChunk(

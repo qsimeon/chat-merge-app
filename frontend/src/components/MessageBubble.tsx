@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Message } from '../types';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronDown, ChevronUp, FileText, Download } from 'lucide-react';
+import { api } from '../api';
 
 interface MessageBubbleProps {
   message: Message;
@@ -104,11 +105,56 @@ function formatInlineContent(text: string): React.ReactNode {
 function MessageBubble({ message }: MessageBubbleProps) {
   const [showReasoning, setShowReasoning] = useState(false);
 
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  };
+
   return (
     <div className={`message message--${message.role}`}>
       <div className="message__content">
-        {formatContent(message.content)}
+        {/* Attachments */}
+        {message.attachments && message.attachments.length > 0 && (
+          <div className="message__attachments">
+            {message.attachments.map((attachment) => {
+              const isImage = attachment.file_type.startsWith('image/');
+              const attachmentUrl = api.getAttachmentUrl(attachment.id);
 
+              return (
+                <div key={attachment.id} className={`message__attachment ${isImage ? 'message__attachment--image' : ''}`}>
+                  {isImage ? (
+                    <a href={attachmentUrl} target="_blank" rel="noopener noreferrer">
+                      <img
+                        src={attachmentUrl}
+                        alt={attachment.file_name}
+                        className="message__attachment-image"
+                      />
+                    </a>
+                  ) : (
+                    <a
+                      href={attachmentUrl}
+                      download={attachment.file_name}
+                      className="message__attachment-file"
+                    >
+                      <FileText size={20} />
+                      <div className="message__attachment-info">
+                        <div className="message__attachment-name">{attachment.file_name}</div>
+                        <div className="message__attachment-size">{formatFileSize(attachment.file_size)}</div>
+                      </div>
+                      <Download size={16} />
+                    </a>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Message content */}
+        {message.content && formatContent(message.content)}
+
+        {/* Reasoning trace */}
         {message.reasoning_trace && (
           <>
             <button
