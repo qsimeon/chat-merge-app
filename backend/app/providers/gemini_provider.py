@@ -1,4 +1,5 @@
 import logging
+import base64
 from typing import AsyncGenerator, Optional, List
 from google import genai
 from google.genai import types
@@ -25,6 +26,7 @@ class GeminiProvider(BaseProvider):
         """
         Convert standard message format to Gemini Content format.
         Filters out system messages (handled separately via system_instruction).
+        Supports attachments (images and text files).
         """
         contents = []
         for msg in messages:
@@ -33,10 +35,39 @@ class GeminiProvider(BaseProvider):
                 continue
             if role == "assistant":
                 role = "model"
+
+            parts = []
+
+            # Add text content
+            if msg.get("content"):
+                parts.append(types.Part.from_text(text=msg["content"]))
+
+            # Add attachments if present
+            if msg.get("attachments"):
+                for att in msg["attachments"]:
+                    if att["file_type"].startswith("image/"):
+                        # Decode base64 to bytes
+                        image_bytes = base64.b64decode(att["data"])
+                        parts.append(types.Part.from_bytes(
+                            data=image_bytes,
+                            mime_type=att["file_type"]
+                        ))
+                    elif att["file_type"].startswith("text/"):
+                        # Include text file content
+                        try:
+                            file_text = base64.b64decode(att["data"]).decode('utf-8')
+                            parts.append(types.Part.from_text(
+                                text=f"[File: {att['file_name']}]\n{file_text}"
+                            ))
+                        except:
+                            parts.append(types.Part.from_text(
+                                text=f"[Attached file: {att['file_name']} ({att['file_type']})]"
+                            ))
+
             contents.append(
                 types.Content(
                     role=role,
-                    parts=[types.Part.from_text(text=msg["content"])]
+                    parts=parts
                 )
             )
         return contents

@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 import logging
 
 from app.database import create_tables
-from app.routes import chats, messages, api_keys, merge
+from app.routes import chats, messages, api_keys, merge, attachments
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -34,6 +34,7 @@ app.include_router(chats.router)
 app.include_router(messages.router)
 app.include_router(api_keys.router)
 app.include_router(merge.router)
+app.include_router(attachments.router)
 
 # Static files setup
 frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"

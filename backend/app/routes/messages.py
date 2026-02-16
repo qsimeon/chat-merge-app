@@ -66,6 +66,7 @@ async def _stream_generator(
     user_content: str,
     temperature: float = 0.7,
     max_tokens: int = None,
+    attachment_ids: list[str] = None,
 ):
     """Generator for SSE streaming — creates its own DB session"""
     async with async_session() as db:
@@ -76,6 +77,7 @@ async def _stream_generator(
                 user_content,
                 temperature=temperature,
                 max_tokens=max_tokens,
+                attachment_ids=attachment_ids,
             ):
                 yield _sse_event({
                     "type": chunk.type,
@@ -111,6 +113,7 @@ async def stream_completion(
             request.content,
             temperature=request.temperature,
             max_tokens=request.max_tokens,
+            attachment_ids=request.attachment_ids,
         ),
         media_type="text/event-stream",
         headers={

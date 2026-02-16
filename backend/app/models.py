@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Text, DateTime, Boolean, JSON, ForeignKey
+from sqlalchemy import Column, String, Text, DateTime, Boolean, JSON, ForeignKey, Integer
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from uuid import uuid4
@@ -59,6 +59,12 @@ class Message(Base):
 
     # Relationships
     chat = relationship("Chat", back_populates="messages")
+    attachments = relationship(
+        "Attachment",
+        back_populates="message",
+        cascade="all, delete-orphan",
+        lazy="selectin"
+    )
 
     def to_dict(self):
         """Convert to dictionary"""
@@ -69,6 +75,7 @@ class Message(Base):
             "content": self.content,
             "reasoning_trace": self.reasoning_trace,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            "attachments": [att.to_dict() for att in self.attachments] if self.attachments else [],
         }
 
 
@@ -88,6 +95,38 @@ class APIKey(Base):
             "id": self.id,
             "provider": self.provider,
             "is_active": self.is_active,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class Attachment(Base):
+    """File/image attachments for messages"""
+    __tablename__ = "attachments"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid4()))
+    message_id = Column(
+        String,
+        ForeignKey("messages.id", ondelete="CASCADE"),
+        nullable=False
+    )
+    file_name = Column(String, nullable=False)
+    file_type = Column(String, nullable=False)  # MIME type
+    file_size = Column(Integer, nullable=False)  # bytes
+    storage_path = Column(Text, nullable=False)  # local path or cloud URL
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    message = relationship("Message", back_populates="attachments")
+
+    def to_dict(self):
+        """Convert to dictionary"""
+        return {
+            "id": self.id,
+            "message_id": self.message_id,
+            "file_name": self.file_name,
+            "file_type": self.file_type,
+            "file_size": self.file_size,
+            "storage_path": self.storage_path,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 

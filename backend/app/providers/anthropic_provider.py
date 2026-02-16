@@ -33,6 +33,53 @@ class AnthropicProvider(BaseProvider):
         """Check if this model supports extended thinking"""
         return model in THINKING_MODELS
 
+    def _format_message_with_attachments(self, msg: dict) -> dict:
+        """Format a message with attachments for Anthropic's multimodal format"""
+        if "attachments" not in msg or not msg["attachments"]:
+            return msg
+
+        # Build content array with text + images
+        content = []
+
+        # Add text content first
+        if msg.get("content"):
+            content.append({
+                "type": "text",
+                "text": msg["content"]
+            })
+
+        # Add attachments
+        for att in msg["attachments"]:
+            if att["file_type"].startswith("image/"):
+                content.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": att["file_type"],
+                        "data": att["data"]
+                    }
+                })
+            else:
+                # For non-image files, include file content as text if it's a text file
+                if att["file_type"].startswith("text/"):
+                    import base64
+                    try:
+                        file_text = base64.b64decode(att['data']).decode('utf-8')
+                        content.append({
+                            "type": "text",
+                            "text": f"[File: {att['file_name']}]\n{file_text}"
+                        })
+                    except:
+                        content.append({
+                            "type": "text",
+                            "text": f"[Attached file: {att['file_name']} ({att['file_type']})]"
+                        })
+
+        return {
+            "role": msg["role"],
+            "content": content
+        }
+
     async def stream_completion(
         self,
         messages: List[dict],
@@ -44,8 +91,10 @@ class AnthropicProvider(BaseProvider):
         """Stream completion from Anthropic with extended thinking"""
         try:
             # Filter out system messages (Anthropic uses separate system param)
+            # and format messages with attachments
             filtered_messages = [
-                m for m in messages if m.get("role") != "system"
+                self._format_message_with_attachments(m)
+                for m in messages if m.get("role") != "system"
             ]
 
             supports_thinking = self._supports_thinking(model)

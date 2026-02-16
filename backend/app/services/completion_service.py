@@ -1,9 +1,11 @@
 import logging
-from typing import AsyncGenerator, Optional
+import base64
+from pathlib import Path
+from typing import AsyncGenerator, Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.models import Chat, Message, APIKey
+from app.models import Chat, Message, APIKey, Attachment
 from app.providers.factory import create_provider
 from app.providers.base import StreamChunk
 from app.services.chat_service import get_chat, get_messages, create_message
@@ -32,6 +34,31 @@ async def get_api_key(db: AsyncSession, provider: str) -> Optional[str]:
         return None
 
 
+def _load_attachment_data(attachment: Attachment) -> Optional[dict]:
+    """Load attachment file data and encode as base64"""
+    try:
+        file_path = Path(attachment.storage_path)
+        if not file_path.exists():
+            logger.warning(f"Attachment file not found: {attachment.storage_path}")
+            return None
+
+        with open(file_path, 'rb') as f:
+            file_data = f.read()
+
+        base64_data = base64.b64encode(file_data).decode('utf-8')
+
+        return {
+            "id": attachment.id,
+            "file_name": attachment.file_name,
+            "file_type": attachment.file_type,
+            "file_size": attachment.file_size,
+            "data": base64_data
+        }
+    except Exception as e:
+        logger.error(f"Error loading attachment {attachment.id}: {str(e)}")
+        return None
+
+
 def _build_message_history(messages: list[Message], include_reasoning: bool = True) -> list[dict]:
     """
     Build message history for sending to a provider.
@@ -45,7 +72,7 @@ def _build_message_history(messages: list[Message], include_reasoning: bool = Tr
         include_reasoning: Whether to include reasoning traces in the context
 
     Returns:
-        List of message dicts with 'role' and 'content'
+        List of message dicts with 'role', 'content', and optional 'attachments'
     """
     history = []
 
@@ -67,7 +94,19 @@ def _build_message_history(messages: list[Message], include_reasoning: bool = Tr
                 f"{content}"
             )
 
-        history.append({"role": msg.role, "content": content})
+        msg_dict = {"role": msg.role, "content": content}
+
+        # Load attachments if present
+        if msg.attachments:
+            attachments_data = []
+            for att in msg.attachments:
+                att_data = _load_attachment_data(att)
+                if att_data:
+                    attachments_data.append(att_data)
+            if attachments_data:
+                msg_dict["attachments"] = attachments_data
+
+        history.append(msg_dict)
 
     return history
 
@@ -78,6 +117,7 @@ async def stream_chat_completion(
     user_content: str,
     temperature: float = 0.7,
     max_tokens: Optional[int] = None,
+    attachment_ids: Optional[List[str]] = None,
 ) -> AsyncGenerator[StreamChunk, None]:
     """
     Stream a chat completion and save to database.
@@ -108,14 +148,36 @@ async def stream_chat_completion(
         # Build message history with reasoning traces included
         message_history = _build_message_history(messages, include_reasoning=True)
 
-        # Add current user message
-        message_history.append({"role": "user", "content": user_content})
-
-        # Save user message to DB
+        # Save user message to DB first (so we have a message_id for attachments)
         user_msg = await create_message(db, chat_id, "user", user_content)
         if not user_msg:
             yield StreamChunk(type="error", data="Failed to save user message")
             return
+
+        # If attachments were provided, load them and add to the current message
+        current_msg_dict = {"role": "user", "content": user_content}
+        if attachment_ids:
+            result = await db.execute(
+                select(Attachment).where(Attachment.id.in_(attachment_ids))
+            )
+            attachments = result.scalars().all()
+            if attachments:
+                # Update message_id for these attachments
+                for att in attachments:
+                    att.message_id = user_msg.id
+                await db.commit()
+
+                # Load attachment data for API call
+                attachments_data = []
+                for att in attachments:
+                    att_data = _load_attachment_data(att)
+                    if att_data:
+                        attachments_data.append(att_data)
+                if attachments_data:
+                    current_msg_dict["attachments"] = attachments_data
+
+        # Add current user message to history
+        message_history.append(current_msg_dict)
 
         # Get API key
         api_key = await get_api_key(db, chat.provider)

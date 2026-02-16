@@ -12,6 +12,17 @@ class ChatCreate(BaseModel):
     system_prompt: Optional[str] = None
 
 
+class AttachmentResponse(BaseModel):
+    """Attachment response"""
+    id: str
+    message_id: str
+    file_name: str
+    file_type: str
+    file_size: int
+    storage_path: str
+    created_at: Optional[str] = None
+
+
 class MessageResponse(BaseModel):
     """Message response"""
     id: str
@@ -20,6 +31,7 @@ class MessageResponse(BaseModel):
     content: str
     reasoning_trace: Optional[str] = None
     created_at: Optional[str] = None
+    attachments: List[AttachmentResponse] = []
 
 
 class ChatResponse(BaseModel):
@@ -59,6 +71,7 @@ class CompletionRequest(BaseModel):
     content: str = Field(..., description="User message content")
     temperature: Optional[float] = Field(0.7, description="Sampling temperature")
     max_tokens: Optional[int] = None
+    attachment_ids: Optional[List[str]] = Field(None, description="List of attachment IDs to include")
 
 
 # API Key schemas
