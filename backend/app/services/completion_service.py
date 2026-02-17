@@ -1,4 +1,5 @@
 import logging
+import asyncio
 import base64
 from pathlib import Path
 from typing import AsyncGenerator, Optional, List
@@ -10,8 +11,14 @@ from app.providers.factory import create_provider
 from app.providers.base import StreamChunk
 from app.services.chat_service import get_chat, get_messages, create_message
 from app.services.encryption_service import decrypt_key
+from app.services import vector_service
 
 logger = logging.getLogger(__name__)
+
+# RAG configuration
+USE_RAG = True  # Enable/disable RAG retrieval
+RAG_CONTEXT_LIMIT = 8  # Number of relevant messages to retrieve
+RECENT_MESSAGES_LIMIT = 10  # Always include N most recent messages
 
 
 async def get_api_key(db: AsyncSession, provider: str) -> Optional[str]:
@@ -111,6 +118,67 @@ def _build_message_history(messages: list[Message], include_reasoning: bool = Tr
     return history
 
 
+async def _build_rag_context(
+    db: AsyncSession,
+    chat_id: str,
+    query_text: str,
+    recent_messages: List[Message]
+) -> List[dict]:
+    """
+    Build context using RAG retrieval.
+
+    Combines:
+    1. Recent messages (for conversation continuity)
+    2. Relevant historical messages (via vector similarity search)
+
+    Args:
+        db: Database session
+        chat_id: Chat ID
+        query_text: Query text for retrieval
+        recent_messages: Recent messages to always include
+
+    Returns:
+        List of message dicts for the LLM
+    """
+    try:
+        # Get relevant messages via vector search
+        relevant_context = await vector_service.query_relevant_context(
+            chat_id=chat_id,
+            query_text=query_text,
+            top_k=RAG_CONTEXT_LIMIT
+        )
+
+        # Get message IDs that are already in recent messages
+        recent_msg_ids = {msg.id for msg in recent_messages}
+
+        # Fetch full message objects for relevant context
+        relevant_msg_ids = [
+            item["message_id"] for item in relevant_context
+            if item["message_id"] not in recent_msg_ids  # Avoid duplicates
+        ]
+
+        if relevant_msg_ids:
+            result = await db.execute(
+                select(Message).where(Message.id.in_(relevant_msg_ids))
+            )
+            relevant_messages = result.scalars().all()
+        else:
+            relevant_messages = []
+
+        # Combine: relevant historical messages + recent messages
+        # Sort by timestamp to maintain chronological order
+        all_messages = list(relevant_messages) + list(recent_messages)
+        all_messages.sort(key=lambda m: m.created_at or "")
+
+        # Build message history
+        return _build_message_history(all_messages, include_reasoning=True)
+
+    except Exception as e:
+        logger.warning(f"RAG retrieval failed, falling back to recent messages: {e}")
+        # Fallback to just recent messages
+        return _build_message_history(recent_messages, include_reasoning=True)
+
+
 async def stream_chat_completion(
     db: AsyncSession,
     chat_id: str,
@@ -122,8 +190,8 @@ async def stream_chat_completion(
     """
     Stream a chat completion and save to database.
 
-    Builds full message history including reasoning traces from prior
-    messages, which is critical for merged chats to have full context.
+    Uses RAG retrieval for merged chats to provide relevant context without
+    hitting token limits. Falls back to recent messages if RAG is unavailable.
 
     Args:
         db: Database session
@@ -131,6 +199,7 @@ async def stream_chat_completion(
         user_content: User message content
         temperature: Sampling temperature
         max_tokens: Max tokens to generate
+        attachment_ids: Optional list of attachment IDs
 
     Yields:
         StreamChunk objects
@@ -142,11 +211,8 @@ async def stream_chat_completion(
             yield StreamChunk(type="error", data="Chat not found")
             return
 
-        # Get previous messages
-        messages = await get_messages(db, chat_id)
-
-        # Build message history with reasoning traces included
-        message_history = _build_message_history(messages, include_reasoning=True)
+        # Get previous messages (all or recent based on RAG)
+        all_messages = await get_messages(db, chat_id)
 
         # Save user message to DB first (so we have a message_id for attachments)
         user_msg = await create_message(db, chat_id, "user", user_content)
@@ -154,29 +220,50 @@ async def stream_chat_completion(
             yield StreamChunk(type="error", data="Failed to save user message")
             return
 
-        # If attachments were provided, load them and add to the current message
-        current_msg_dict = {"role": "user", "content": user_content}
+        # Handle attachments
+        current_attachment_data = []
         if attachment_ids:
             result = await db.execute(
                 select(Attachment).where(Attachment.id.in_(attachment_ids))
             )
             attachments = result.scalars().all()
             if attachments:
-                # Update message_id for these attachments
+                # Associate attachments with the new user message
                 for att in attachments:
                     att.message_id = user_msg.id
                 await db.commit()
 
                 # Load attachment data for API call
-                attachments_data = []
                 for att in attachments:
                     att_data = _load_attachment_data(att)
                     if att_data:
-                        attachments_data.append(att_data)
-                if attachments_data:
-                    current_msg_dict["attachments"] = attachments_data
+                        current_attachment_data.append(att_data)
+
+        # Build context using RAG if enabled (for merged chats with many messages)
+        if USE_RAG and len(all_messages) > RECENT_MESSAGES_LIMIT:
+            # Use recent messages + RAG-retrieved relevant messages
+            recent_messages = all_messages[-RECENT_MESSAGES_LIMIT:]
+            message_history = await _build_rag_context(
+                db, chat_id, user_content, recent_messages
+            )
+            logger.info(f"Using RAG context for chat {chat_id} ({len(all_messages)} total messages)")
+        else:
+            # For short conversations, use full history
+            message_history = _build_message_history(all_messages, include_reasoning=True)
+
+        # Store user message vector (fire and forget)
+        asyncio.create_task(vector_service.store_message_vector(
+            chat_id=chat_id,
+            message_id=user_msg.id,
+            content=user_content,
+            role="user",
+            attachments=[{"file_name": a["file_name"]} for a in current_attachment_data] if current_attachment_data else None
+        ))
 
         # Add current user message to history
+        current_msg_dict = {"role": "user", "content": user_content}
+        if current_attachment_data:
+            current_msg_dict["attachments"] = current_attachment_data
         message_history.append(current_msg_dict)
 
         # Get API key
@@ -226,6 +313,16 @@ async def stream_chat_completion(
                     )
                     if assistant_msg:
                         logger.info(f"Saved assistant message to chat {chat_id}")
+
+                        # Store assistant message vector (fire and forget)
+                        asyncio.create_task(vector_service.store_message_vector(
+                            chat_id=chat_id,
+                            message_id=assistant_msg.id,
+                            content=accumulated_content,
+                            role="assistant",
+                            reasoning_trace=accumulated_reasoning if accumulated_reasoning else None
+                        ))
+
                         yield StreamChunk(type="done", data=assistant_msg.id)
                     else:
                         yield StreamChunk(

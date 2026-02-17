@@ -8,12 +8,14 @@ import MergeModal from './MergeModal';
 function App() {
   const loadChats = useStore((state) => state.loadChats);
   const loadApiKeys = useStore((state) => state.loadApiKeys);
+  const checkHealth = useStore((state) => state.checkHealth);
   const showSettings = useStore((state) => state.showSettings);
   const showMerge = useStore((state) => state.showMerge);
 
   useEffect(() => {
     loadChats();
     loadApiKeys();
+    checkHealth();
   }, []);
 
   return (

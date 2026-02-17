@@ -8,6 +8,7 @@ import logging
 
 from app.database import create_tables
 from app.routes import chats, messages, api_keys, merge, attachments
+from app.services import vector_service
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -53,16 +54,28 @@ async def root():
 
 @app.on_event("startup")
 async def startup_event():
-    """Create database tables on startup"""
+    """Create database tables and initialize vector store on startup"""
     logger.info("Creating database tables...")
     await create_tables()
     logger.info("Database tables created successfully")
 
+    # Initialize Pinecone vector store (optional - gracefully skip if not configured)
+    try:
+        await vector_service.initialize_index()
+        logger.info("Vector store initialized")
+    except Exception as e:
+        logger.warning(f"Vector store initialization skipped (not configured): {e}")
+        logger.warning("Set PINECONE_API_KEY to enable RAG retrieval")
+
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
-    return {"status": "ok"}
+    """Health check endpoint with feature availability"""
+    return {
+        "status": "ok",
+        "vector_store": "enabled" if vector_service.is_configured() else "disabled",
+        "rag_enabled": vector_service.is_configured()
+    }
 
 
 if __name__ == "__main__":

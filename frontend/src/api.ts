@@ -155,6 +155,13 @@ export const api = {
     });
   },
 
+  // Health check
+  async getHealth(): Promise<{ status: string; rag_enabled: boolean; vector_store: string }> {
+    const response = await fetch('/health');
+    if (!response.ok) throw new Error('Failed to fetch health');
+    return response.json();
+  },
+
   // Models
   async getModels(): Promise<Record<string, string[]>> {
     const response = await fetch(`${BASE_URL}/models`);

@@ -8,6 +8,7 @@ export interface AppState {
   currentChatId: string | null;
   currentMessages: Message[];
   apiKeys: APIKeyInfo[];
+  ragEnabled: boolean;
 
   // UI state
   isLoading: boolean;
@@ -31,6 +32,7 @@ export interface AppState {
   updateChatTitle: (chatId: string, title: string) => Promise<void>;
   sendMessage: (content: string, files?: File[]) => Promise<void>;
   loadApiKeys: () => Promise<void>;
+  checkHealth: () => Promise<void>;
 
   // Merge
   toggleMergeSelect: (chatId: string) => void;
@@ -49,6 +51,7 @@ export const useStore = create<AppState>((set, get) => ({
   currentChatId: null,
   currentMessages: [],
   apiKeys: [],
+  ragEnabled: false,
   isLoading: false,
   isStreaming: false,
   streamingContent: '',
@@ -233,6 +236,15 @@ export const useStore = create<AppState>((set, get) => ({
       set({ apiKeys });
     } catch (error) {
       set({ error: error instanceof Error ? error.message : 'Failed to load API keys' });
+    }
+  },
+
+  checkHealth: async () => {
+    try {
+      const health = await api.getHealth();
+      set({ ragEnabled: health.rag_enabled });
+    } catch {
+      // Health check failure is non-critical
     }
   },
 

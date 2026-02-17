@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useStore } from '../store';
 import { PROVIDER_LABELS, PROVIDER_MODELS } from '../types';
-import { X } from 'lucide-react';
+import { X, Database, AlertCircle } from 'lucide-react';
 
 function MergeModal() {
   const {
@@ -9,6 +9,7 @@ function MergeModal() {
     mergeSelectedIds,
     isMerging,
     mergeProgress,
+    ragEnabled,
     setShowMerge,
     toggleMergeSelect,
     startMerge,
@@ -48,6 +49,21 @@ function MergeModal() {
         <div className="modal__body">
           {!isMerging ? (
             <>
+              {/* RAG Status Banner */}
+              <div className={`merge-modal__rag-status ${ragEnabled ? 'merge-modal__rag-status--enabled' : 'merge-modal__rag-status--disabled'}`}>
+                {ragEnabled ? (
+                  <>
+                    <Database size={14} />
+                    <span>RAG enabled — merged chats use vector retrieval for relevant context</span>
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle size={14} />
+                    <span>RAG not configured — set PINECONE_API_KEY to enable smart context retrieval</span>
+                  </>
+                )}
+              </div>
+
               <div className="merge-modal__chat-list">
                 <div style={{ marginBottom: '12px', fontSize: '14px', color: 'var(--text-secondary)' }}>
                   Select {2 - mergeSelectedIds.length} more chat{2 - mergeSelectedIds.length !== 1 ? 's' : ''} to merge

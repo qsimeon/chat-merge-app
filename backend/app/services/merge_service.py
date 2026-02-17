@@ -10,6 +10,7 @@ from app.providers.factory import create_provider
 from app.providers.base import StreamChunk
 from app.services.chat_service import get_chat, get_messages, create_chat, create_message
 from app.services.completion_service import get_api_key
+from app.services import vector_service
 from app.schemas import ChatCreate
 
 logger = logging.getLogger(__name__)
@@ -231,7 +232,22 @@ async def merge_chats(
 
         yield StreamChunk(type="content", data=f"\n{synthesis_content}\n")
 
-        # Step 5: Save merge history
+        # Step 5: Merge vector namespaces for RAG retrieval
+        yield StreamChunk(type="content", data="Merging vector stores for RAG retrieval...\n")
+        try:
+            rag_success = await vector_service.merge_vector_namespaces(
+                source_chat_ids=chat_ids,
+                target_chat_id=merged_chat.id
+            )
+            if rag_success:
+                yield StreamChunk(type="content", data="Vector stores merged.\n")
+            else:
+                yield StreamChunk(type="content", data="Vector store merge partial (RAG will fall back to recent messages).\n")
+        except Exception as e:
+            logger.warning(f"Vector merge failed (non-fatal): {e}")
+            yield StreamChunk(type="content", data="Note: RAG vector merge unavailable (Pinecone not configured).\n")
+
+        # Step 6: Save merge history
         merge_history = MergeHistory(
             source_chat_ids=chat_ids,
             merged_chat_id=merged_chat.id,

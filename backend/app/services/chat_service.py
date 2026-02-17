@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from typing import List, Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
@@ -69,10 +70,15 @@ async def update_chat(
 
 
 async def delete_chat(db: AsyncSession, chat_id: str) -> bool:
-    """Delete a chat and all its messages"""
+    """Delete a chat and all its messages, including vector store namespace"""
+    from app.services import vector_service
+
     chat = await get_chat(db, chat_id)
     if not chat:
         return False
+
+    # Delete vector namespace (non-blocking, fire and forget)
+    asyncio.create_task(vector_service.delete_namespace(chat_id))
 
     await db.delete(chat)
     await db.commit()
