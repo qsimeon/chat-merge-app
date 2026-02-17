@@ -1,6 +1,4 @@
 import logging
-import shutil
-from pathlib import Path
 from typing import AsyncGenerator, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
@@ -10,7 +8,7 @@ from app.providers.factory import create_provider
 from app.providers.base import StreamChunk
 from app.services.chat_service import get_chat, get_messages, create_chat, create_message
 from app.services.completion_service import get_api_key
-from app.services import vector_service
+from app.services import vector_service, storage_service
 from app.schemas import ChatCreate
 
 logger = logging.getLogger(__name__)
@@ -147,16 +145,15 @@ async def merge_chats(
             # Copy attachments if the message has any
             if msg.attachments and new_message:
                 for att in msg.attachments:
-                    # Copy file to new location
-                    source_path = Path(att.storage_path)
-                    if source_path.exists():
-                        # Create new filename to avoid collisions
-                        from uuid import uuid4
-                        new_filename = f"{uuid4()}{source_path.suffix}"
-                        new_path = source_path.parent / new_filename
-
-                        # Copy file
-                        shutil.copy2(source_path, new_path)
+                    # Read file from storage (local or cloud)
+                    file_data = await storage_service.get_file(att.storage_path)
+                    if file_data:
+                        # Save to new location
+                        new_path, _ = await storage_service.save_file(
+                            file_data=file_data,
+                            filename=att.file_name,
+                            content_type=att.file_type
+                        )
 
                         # Create new attachment record
                         new_attachment = Attachment(
@@ -164,7 +161,7 @@ async def merge_chats(
                             file_name=att.file_name,
                             file_type=att.file_type,
                             file_size=att.file_size,
-                            storage_path=str(new_path)
+                            storage_path=new_path
                         )
                         db.add(new_attachment)
 

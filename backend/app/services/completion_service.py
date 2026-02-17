@@ -11,7 +11,7 @@ from app.providers.factory import create_provider
 from app.providers.base import StreamChunk
 from app.services.chat_service import get_chat, get_messages, create_message
 from app.services.encryption_service import decrypt_key
-from app.services import vector_service
+from app.services import vector_service, storage_service
 
 logger = logging.getLogger(__name__)
 
@@ -41,16 +41,13 @@ async def get_api_key(db: AsyncSession, provider: str) -> Optional[str]:
         return None
 
 
-def _load_attachment_data(attachment: Attachment) -> Optional[dict]:
-    """Load attachment file data and encode as base64"""
+async def _load_attachment_data(attachment: Attachment) -> Optional[dict]:
+    """Load attachment file data and encode as base64 (supports local + cloud storage)"""
     try:
-        file_path = Path(attachment.storage_path)
-        if not file_path.exists():
+        file_data = await storage_service.get_file(attachment.storage_path)
+        if not file_data:
             logger.warning(f"Attachment file not found: {attachment.storage_path}")
             return None
-
-        with open(file_path, 'rb') as f:
-            file_data = f.read()
 
         base64_data = base64.b64encode(file_data).decode('utf-8')
 
@@ -66,7 +63,7 @@ def _load_attachment_data(attachment: Attachment) -> Optional[dict]:
         return None
 
 
-def _build_message_history(messages: list[Message], include_reasoning: bool = True) -> list[dict]:
+async def _build_message_history(messages: list[Message], include_reasoning: bool = True) -> list[dict]:
     """
     Build message history for sending to a provider.
 
@@ -107,7 +104,7 @@ def _build_message_history(messages: list[Message], include_reasoning: bool = Tr
         if msg.attachments:
             attachments_data = []
             for att in msg.attachments:
-                att_data = _load_attachment_data(att)
+                att_data = await _load_attachment_data(att)
                 if att_data:
                     attachments_data.append(att_data)
             if attachments_data:
@@ -171,12 +168,12 @@ async def _build_rag_context(
         all_messages.sort(key=lambda m: m.created_at or "")
 
         # Build message history
-        return _build_message_history(all_messages, include_reasoning=True)
+        return await _build_message_history(all_messages, include_reasoning=True)
 
     except Exception as e:
         logger.warning(f"RAG retrieval failed, falling back to recent messages: {e}")
         # Fallback to just recent messages
-        return _build_message_history(recent_messages, include_reasoning=True)
+        return await _build_message_history(recent_messages, include_reasoning=True)
 
 
 async def stream_chat_completion(
@@ -249,7 +246,7 @@ async def stream_chat_completion(
             logger.info(f"Using RAG context for chat {chat_id} ({len(all_messages)} total messages)")
         else:
             # For short conversations, use full history
-            message_history = _build_message_history(all_messages, include_reasoning=True)
+            message_history = await _build_message_history(all_messages, include_reasoning=True)
 
         # Store user message vector (fire and forget)
         asyncio.create_task(vector_service.store_message_vector(

@@ -1,3 +1,6 @@
+# Root-level requirements.txt for Vercel Python deployment
+# Points to the backend requirements
+
 fastapi>=0.100.0
 uvicorn[standard]>=0.25.0
 sqlalchemy>=2.0.0

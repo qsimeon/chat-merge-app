@@ -5,16 +5,33 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Database URL
-DATABASE_URL = "sqlite+aiosqlite:///./chat_app.db"
+# Determine database URL from environment
+# - Local development: SQLite via aiosqlite
+# - Production (Vercel): PostgreSQL via asyncpg (set DATABASE_URL env var)
+_raw_url = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./chat_app.db")
+
+# Vercel Postgres provides postgres:// URLs — upgrade to asyncpg dialect
+if _raw_url.startswith("postgres://"):
+    DATABASE_URL = _raw_url.replace("postgres://", "postgresql+asyncpg://", 1)
+elif _raw_url.startswith("postgresql://"):
+    DATABASE_URL = _raw_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+else:
+    DATABASE_URL = _raw_url
+
+IS_SQLITE = DATABASE_URL.startswith("sqlite")
+logger.info(f"Using {'SQLite' if IS_SQLITE else 'PostgreSQL'} database")
+
+# Build engine kwargs
+engine_kwargs = {
+    "echo": False,
+    "future": True,
+}
+
+if IS_SQLITE:
+    engine_kwargs["connect_args"] = {"timeout": 30}
 
 # Create async engine
-engine = create_async_engine(
-    DATABASE_URL,
-    echo=False,
-    future=True,
-    connect_args={"timeout": 30}
-)
+engine = create_async_engine(DATABASE_URL, **engine_kwargs)
 
 # Session factory
 async_session = async_sessionmaker(

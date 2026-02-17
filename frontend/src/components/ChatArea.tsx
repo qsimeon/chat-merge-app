@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 import MessageBubble from './MessageBubble';
 import InputArea from './InputArea';
-import { MessageSquare } from 'lucide-react';
+import { MessageSquare, GitMerge, Zap, Brain, Paperclip, Database } from 'lucide-react';
 
 function ChatArea() {
   const {
@@ -46,10 +46,84 @@ function ChatArea() {
   if (!currentChatId) {
     return (
       <div className="chat-area">
-        <div className="chat-area__empty">
-          <MessageSquare className="chat-area__empty-icon" />
-          <div className="chat-area__empty-text">
-            Select a chat or create a new one to get started
+        <div className="landing">
+          <div className="landing__hero">
+            <div className="landing__logo">
+              <GitMerge size={40} />
+            </div>
+            <h1 className="landing__title">ChatMerge</h1>
+            <p className="landing__tagline">
+              Chat with OpenAI, Anthropic, and Gemini — then merge your best conversations into one.
+            </p>
+          </div>
+
+          <div className="landing__features">
+            <div className="landing__feature">
+              <div className="landing__feature-icon">
+                <GitMerge size={20} />
+              </div>
+              <div className="landing__feature-content">
+                <div className="landing__feature-title">Merge Any Chats</div>
+                <div className="landing__feature-desc">
+                  Combine conversations from different providers into a single thread. The AI sees the full context of all merged chats — every message, reasoning trace, and insight.
+                </div>
+              </div>
+            </div>
+
+            <div className="landing__feature">
+              <div className="landing__feature-icon">
+                <Database size={20} />
+              </div>
+              <div className="landing__feature-content">
+                <div className="landing__feature-title">RAG-Powered Context</div>
+                <div className="landing__feature-desc">
+                  Merged chats use vector retrieval to find the most relevant context — no more hitting token limits when conversations get long.
+                </div>
+              </div>
+            </div>
+
+            <div className="landing__feature">
+              <div className="landing__feature-icon">
+                <Brain size={20} />
+              </div>
+              <div className="landing__feature-content">
+                <div className="landing__feature-title">Reasoning Traces</div>
+                <div className="landing__feature-desc">
+                  Captures extended thinking from Claude and reasoning summaries from o-series models. Toggle to see the model's full thought process.
+                </div>
+              </div>
+            </div>
+
+            <div className="landing__feature">
+              <div className="landing__feature-icon">
+                <Paperclip size={20} />
+              </div>
+              <div className="landing__feature-content">
+                <div className="landing__feature-title">Files & Images</div>
+                <div className="landing__feature-desc">
+                  Drag-and-drop or paste images directly. Upload PDFs and code files. Attachments travel with messages through merges.
+                </div>
+              </div>
+            </div>
+
+            <div className="landing__feature">
+              <div className="landing__feature-icon">
+                <Zap size={20} />
+              </div>
+              <div className="landing__feature-content">
+                <div className="landing__feature-title">Multi-Provider</div>
+                <div className="landing__feature-desc">
+                  One interface for GPT-4o, o4-mini, Claude Sonnet/Opus, and Gemini 2.0 Flash. Add your API keys in Settings to get started.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="landing__cta">
+            <div className="landing__cta-text">
+              <MessageSquare size={16} />
+              <span>Create a new chat from the sidebar to get started</span>
+            </div>
           </div>
         </div>
       </div>

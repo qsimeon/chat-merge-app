@@ -1,24 +1,19 @@
 import logging
-import os
-import aiofiles
 from pathlib import Path
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.database import async_session
 from app.models import Attachment, Message
 from app.schemas import AttachmentResponse
+from app.services import storage_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["attachments"])
-
-# Upload directory - will be replaced with cloud storage for Vercel
-UPLOAD_DIR = Path("uploads")
-UPLOAD_DIR.mkdir(exist_ok=True)
 
 # Allowed file types
 ALLOWED_MIME_TYPES = {
@@ -48,9 +43,8 @@ async def upload_attachments(
     files: List[UploadFile] = File(...),
     db: AsyncSession = Depends(get_db)
 ):
-    """Upload one or more file attachments (without message association yet)"""
+    """Upload one or more file attachments (stored locally or in cloud)"""
     try:
-
         attachments = []
 
         for file in files:
@@ -72,31 +66,26 @@ async def upload_attachments(
                     detail=f"File {file.filename} exceeds max size of 10MB"
                 )
 
-            # Generate unique filename to avoid collisions
-            from uuid import uuid4
-            file_ext = Path(file.filename).suffix
-            unique_filename = f"{uuid4()}{file_ext}"
-            storage_path = UPLOAD_DIR / unique_filename
-
-            # Save file
-            async with aiofiles.open(storage_path, 'wb') as f:
-                await f.write(content)
+            # Save file using storage service (local or cloud)
+            storage_path, _ = await storage_service.save_file(
+                file_data=content,
+                filename=file.filename,
+                content_type=file.content_type
+            )
 
             # Create attachment record (message_id will be set later during completion)
-            # We need a temporary placeholder - using empty string for now
             attachment = Attachment(
                 message_id="",  # Will be updated when message is created
                 file_name=file.filename,
                 file_type=file.content_type,
                 file_size=file_size,
-                storage_path=str(storage_path)
+                storage_path=storage_path
             )
             db.add(attachment)
             attachments.append(attachment)
 
         await db.commit()
 
-        # Return attachment data
         return [
             AttachmentResponse(
                 id=att.id,
@@ -136,12 +125,16 @@ async def get_attachment(
                 detail=f"Attachment {attachment_id} not found"
             )
 
-        # Check if file exists
+        # If storage path is a cloud URL, redirect to it
+        if attachment.storage_path.startswith("http"):
+            return RedirectResponse(url=attachment.storage_path)
+
+        # Local file: serve directly
         file_path = Path(attachment.storage_path)
         if not file_path.exists():
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"File not found at {attachment.storage_path}"
+                detail=f"File not found"
             )
 
         return FileResponse(
@@ -177,9 +170,7 @@ async def delete_attachment(
             )
 
         # Delete file from storage
-        file_path = Path(attachment.storage_path)
-        if file_path.exists():
-            file_path.unlink()
+        await storage_service.delete_file(attachment.storage_path)
 
         # Delete database record
         await db.delete(attachment)
