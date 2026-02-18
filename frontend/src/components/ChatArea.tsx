@@ -11,7 +11,6 @@ function ChatArea() {
     currentMessages,
     isStreaming,
     streamingContent,
-    streamingReasoning,
     error,
     setError,
   } = useStore();
@@ -29,6 +28,7 @@ function ChatArea() {
   useEffect(() => {
     scrollToBottom();
   }, [currentMessages, isStreaming, streamingContent, error]);
+
 
   const handleTitleClick = () => {
     if (!currentChat) return;
@@ -65,7 +65,7 @@ function ChatArea() {
               <div className="landing__feature-content">
                 <div className="landing__feature-title">Merge Any Chats</div>
                 <div className="landing__feature-desc">
-                  Combine conversations from different providers into a single thread. The AI sees the full context of all merged chats — every message, reasoning trace, and insight.
+                  Combine conversations from different providers into a single thread. The AI retrieves semantically fused context from all merged chats via vector search.
                 </div>
               </div>
             </div>
@@ -87,9 +87,9 @@ function ChatArea() {
                 <Brain size={20} />
               </div>
               <div className="landing__feature-content">
-                <div className="landing__feature-title">Reasoning Traces</div>
+                <div className="landing__feature-title">Smart Vector Fusion</div>
                 <div className="landing__feature-desc">
-                  Captures extended thinking from Claude and reasoning summaries from o-series models. Toggle to see the model's full thought process.
+                  Merged chats use nearest-neighbor vector fusion — semantically overlapping content is averaged into single embeddings, unique content is preserved. Context scales infinitely.
                 </div>
               </div>
             </div>
@@ -155,6 +155,23 @@ function ChatArea() {
             )}
           </div>
           <div className="chat-area__model-info">
+            {currentChat.is_merged && (
+              <div className="model-badge" style={{
+                background: 'rgba(34, 197, 94, 0.15)',
+                border: '1px solid rgba(34, 197, 94, 0.4)',
+                color: '#4ade80',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                padding: '4px 10px',
+                borderRadius: '8px',
+                fontSize: '12px',
+                marginRight: '8px',
+              }}>
+                <Database size={12} />
+                <span>RAG-powered</span>
+              </div>
+            )}
             <div className="model-badge">
               <div className="model-badge__provider">{currentChat.provider}</div>
               <div className="model-badge__model">{currentChat.model}</div>
@@ -177,13 +194,6 @@ function ChatArea() {
                   <div className="message__typing-dot" />
                   <div className="message__typing-dot" />
                   <div className="message__typing-dot" />
-                </div>
-              )}
-              {streamingReasoning && (
-                <div className="message__reasoning">
-                  <div style={{ fontSize: '12px', marginBottom: '8px' }}>
-                    Reasoning: {streamingReasoning}
-                  </div>
                 </div>
               )}
             </div>

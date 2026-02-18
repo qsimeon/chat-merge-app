@@ -4,6 +4,7 @@ export interface Chat {
   provider: string;
   model: string;
   system_prompt: string | null;
+  is_merged?: boolean;
   created_at: string;
   updated_at: string;
   message_count?: number;
@@ -25,7 +26,6 @@ export interface Message {
   chat_id: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
-  reasoning_trace: string | null;
   created_at: string;
   attachments?: Attachment[];
 }
@@ -44,7 +44,7 @@ export interface MergeRequest {
 }
 
 export interface StreamChunk {
-  type: 'content' | 'reasoning' | 'done' | 'error' | 'merge_complete';
+  type: 'content' | 'done' | 'error' | 'merge_complete' | 'warning';
   data: string;
 }
 
@@ -56,7 +56,16 @@ export const PROVIDER_MODELS: Record<string, string[]> = {
   gemini: ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'],
 };
 
+// All API key providers (used in Settings modal)
 export const PROVIDER_LABELS: Record<string, string> = {
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+  gemini: 'Google Gemini',
+  pinecone: 'Pinecone (RAG)',
+};
+
+// LLM providers only — Pinecone is a vector store, not a chat model (used in merge/chat UI)
+export const LLM_PROVIDER_LABELS: Record<string, string> = {
   openai: 'OpenAI',
   anthropic: 'Anthropic',
   gemini: 'Google Gemini',

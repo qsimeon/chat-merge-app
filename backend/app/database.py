@@ -1,6 +1,7 @@
 import os
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
+from sqlalchemy import text
 import logging
 
 logger = logging.getLogger(__name__)
@@ -52,7 +53,16 @@ async def get_session() -> AsyncSession:
 
 
 async def create_tables():
-    """Create all database tables"""
+    """Create all database tables and run migrations for new columns."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Migration: add is_merged column if it doesn't exist yet (existing databases)
+        try:
+            if IS_SQLITE:
+                await conn.execute(text("ALTER TABLE chats ADD COLUMN is_merged BOOLEAN DEFAULT 0"))
+            else:
+                await conn.execute(text("ALTER TABLE chats ADD COLUMN is_merged BOOLEAN DEFAULT FALSE"))
+            logger.info("Migration: added is_merged column to chats table")
+        except Exception:
+            pass  # Column already exists
     logger.info("All database tables created")

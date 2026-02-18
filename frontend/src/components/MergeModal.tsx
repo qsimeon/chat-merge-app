@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useStore } from '../store';
-import { PROVIDER_LABELS, PROVIDER_MODELS } from '../types';
+import { LLM_PROVIDER_LABELS, PROVIDER_MODELS } from '../types';
 import { X, Database, AlertCircle } from 'lucide-react';
 
 function MergeModal() {
@@ -54,12 +54,12 @@ function MergeModal() {
                 {ragEnabled ? (
                   <>
                     <Database size={14} />
-                    <span>RAG enabled — merged chats use vector retrieval for relevant context</span>
+                    <span>Smart fusion enabled — vector stores will be intelligently merged, not just concatenated</span>
                   </>
                 ) : (
                   <>
                     <AlertCircle size={14} />
-                    <span>RAG not configured — set PINECONE_API_KEY to enable smart context retrieval</span>
+                    <span>Pinecone key required — add it in Settings to enable vector-fusion merge</span>
                   </>
                 )}
               </div>
@@ -123,7 +123,7 @@ function MergeModal() {
                       setMergeModel(PROVIDER_MODELS[e.target.value][0]);
                     }}
                   >
-                    {Object.entries(PROVIDER_LABELS).map(([key, label]) => (
+                    {Object.entries(LLM_PROVIDER_LABELS).map(([key, label]) => (
                       <option key={key} value={key}>
                         {label}
                       </option>

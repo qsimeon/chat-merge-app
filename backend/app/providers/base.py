@@ -6,7 +6,7 @@ from dataclasses import dataclass
 @dataclass
 class StreamChunk:
     """Represents a chunk from a streaming response"""
-    type: str  # "content", "reasoning", "error", "done"
+    type: str  # "content", "error", "done", "warning", "merge_complete"
     data: str
 
 

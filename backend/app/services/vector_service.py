@@ -3,111 +3,71 @@ Vector store service for RAG-based context retrieval.
 
 Uses Pinecone for serverless vector storage and OpenAI embeddings.
 Each chat gets its own namespace for vector isolation.
+
+Keys are user-provided (stored encrypted in DB), not env vars.
+All public functions accept pinecone_key and openai_key as explicit params.
 """
 
 import logging
-import os
-from typing import List, Dict, Optional, Any
-from uuid import uuid4
+import numpy as np
+from typing import List, Dict, Optional, Any, Tuple
 from openai import AsyncOpenAI
 from pinecone import Pinecone, ServerlessSpec
 
 logger = logging.getLogger(__name__)
 
-# Embedding model configuration
 EMBEDDING_MODEL = "text-embedding-3-small"
 EMBEDDING_DIMENSION = 1536
-
-# Pinecone index name
 INDEX_NAME = "chatmerge"
 
-# Singleton Pinecone client
-_pinecone_client = None
-_openai_client = None
+# Per-key client caches (avoids recreating connections on every call)
+_pinecone_index_cache: Dict[str, Any] = {}
+_openai_client_cache: Dict[str, AsyncOpenAI] = {}
+# Track which Pinecone keys have had their index verified
+_index_verified: set = set()
 
 
-def is_configured() -> bool:
-    """Check if Pinecone is configured"""
-    return bool(os.getenv("PINECONE_API_KEY"))
+def _get_pinecone_index(pinecone_key: str):
+    if pinecone_key not in _pinecone_index_cache:
+        pc = Pinecone(api_key=pinecone_key)
+        _pinecone_index_cache[pinecone_key] = pc.Index(INDEX_NAME)
+    return _pinecone_index_cache[pinecone_key]
 
 
-def get_pinecone_client() -> Pinecone:
-    """Get or create Pinecone client singleton"""
-    global _pinecone_client
-    if _pinecone_client is None:
-        api_key = os.getenv("PINECONE_API_KEY")
-        if not api_key:
-            raise ValueError("PINECONE_API_KEY environment variable not set")
-        _pinecone_client = Pinecone(api_key=api_key)
-    return _pinecone_client
+def _get_openai_client(openai_key: str) -> AsyncOpenAI:
+    if openai_key not in _openai_client_cache:
+        _openai_client_cache[openai_key] = AsyncOpenAI(api_key=openai_key)
+    return _openai_client_cache[openai_key]
 
 
-def get_openai_client() -> AsyncOpenAI:
-    """Get or create OpenAI client for embeddings"""
-    global _openai_client
-    if _openai_client is None:
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError("OPENAI_API_KEY environment variable not set")
-        _openai_client = AsyncOpenAI(api_key=api_key)
-    return _openai_client
-
-
-async def initialize_index():
-    """Initialize Pinecone index if it doesn't exist"""
+async def ensure_index_exists(pinecone_key: str):
+    """Create the Pinecone index if it doesn't exist yet. Called lazily on first use."""
+    if pinecone_key in _index_verified:
+        return
     try:
-        pc = get_pinecone_client()
-
-        # Check if index exists
-        existing_indexes = pc.list_indexes()
-        index_names = [idx.name for idx in existing_indexes]
-
-        if INDEX_NAME not in index_names:
+        pc = Pinecone(api_key=pinecone_key)
+        existing = [idx.name for idx in pc.list_indexes()]
+        if INDEX_NAME not in existing:
             logger.info(f"Creating Pinecone index: {INDEX_NAME}")
             pc.create_index(
                 name=INDEX_NAME,
                 dimension=EMBEDDING_DIMENSION,
                 metric="cosine",
-                spec=ServerlessSpec(
-                    cloud="aws",
-                    region="us-east-1"  # Change based on your region preference
-                )
+                spec=ServerlessSpec(cloud="aws", region="us-east-1"),
             )
             logger.info(f"Pinecone index {INDEX_NAME} created")
         else:
             logger.info(f"Pinecone index {INDEX_NAME} already exists")
-
+        _index_verified.add(pinecone_key)
     except Exception as e:
-        logger.error(f"Failed to initialize Pinecone index: {e}")
+        logger.error(f"Failed to ensure Pinecone index exists: {e}")
         raise
 
 
-def get_index():
-    """Get Pinecone index"""
-    pc = get_pinecone_client()
-    return pc.Index(INDEX_NAME)
-
-
-async def embed_text(text: str) -> List[float]:
-    """
-    Generate embedding for text using OpenAI.
-
-    Args:
-        text: Text to embed
-
-    Returns:
-        List of floats representing the embedding vector
-    """
-    try:
-        client = get_openai_client()
-        response = await client.embeddings.create(
-            model=EMBEDDING_MODEL,
-            input=text
-        )
-        return response.data[0].embedding
-    except Exception as e:
-        logger.error(f"Failed to generate embedding: {e}")
-        raise
+async def embed_text(text: str, openai_key: str) -> List[float]:
+    client = _get_openai_client(openai_key)
+    response = await client.embeddings.create(model=EMBEDDING_MODEL, input=text)
+    return response.data[0].embedding
 
 
 async def store_message_vector(
@@ -115,39 +75,23 @@ async def store_message_vector(
     message_id: str,
     content: str,
     role: str,
-    reasoning_trace: Optional[str] = None,
-    attachments: Optional[List[Dict[str, Any]]] = None
+    pinecone_key: str,
+    openai_key: str,
+    attachments: Optional[List[Dict[str, Any]]] = None,
 ):
-    """
-    Store a message in the vector store.
-
-    Args:
-        chat_id: Chat ID (used as namespace)
-        message_id: Unique message ID
-        content: Message content
-        role: Message role (user/assistant)
-        reasoning_trace: Optional reasoning trace
-        attachments: Optional list of attachment metadata
-    """
-    if not is_configured():
+    """Store a message embedding in the chat's Pinecone namespace."""
+    if not pinecone_key or not openai_key:
         return
-
     try:
-        # Build full text to embed: content + reasoning + attachment info
+        await ensure_index_exists(pinecone_key)
+
         text_to_embed = content
-
-        if reasoning_trace:
-            text_to_embed += f"\n\n[Reasoning]\n{reasoning_trace}"
-
         if attachments:
             for att in attachments:
                 text_to_embed += f"\n\n[Attachment: {att.get('file_name', 'unknown')}]"
 
-        # Generate embedding
-        embedding = await embed_text(text_to_embed)
-
-        # Store in Pinecone with metadata
-        index = get_index()
+        embedding = await embed_text(text_to_embed, openai_key)
+        index = _get_pinecone_index(pinecone_key)
         index.upsert(
             vectors=[{
                 "id": message_id,
@@ -155,65 +99,43 @@ async def store_message_vector(
                 "metadata": {
                     "chat_id": chat_id,
                     "role": role,
-                    "content": content[:1000],  # Truncate for metadata size limits
-                    "has_reasoning": bool(reasoning_trace),
+                    "content": content[:1000],
                     "has_attachments": bool(attachments),
-                }
+                },
             }],
-            namespace=chat_id  # Each chat has its own namespace
+            namespace=chat_id,
         )
-
         logger.info(f"Stored vector for message {message_id} in namespace {chat_id}")
-
     except Exception as e:
         logger.error(f"Failed to store message vector: {e}")
-        # Don't raise - vector storage failures shouldn't break message creation
 
 
 async def query_relevant_context(
     chat_id: str,
     query_text: str,
+    pinecone_key: str,
+    openai_key: str,
     top_k: int = 5,
 ) -> List[Dict[str, Any]]:
-    """
-    Query the vector store for relevant context.
-
-    Args:
-        chat_id: Chat ID (namespace to query)
-        query_text: Query text to find relevant messages
-        top_k: Number of results to return
-
-    Returns:
-        List of dicts with message metadata and similarity scores
-    """
-    if not is_configured():
+    """Query the vector store for messages relevant to query_text."""
+    if not pinecone_key or not openai_key:
         return []
-
     try:
-        # Generate embedding for query
-        query_embedding = await embed_text(query_text)
-
-        # Query Pinecone
-        index = get_index()
+        await ensure_index_exists(pinecone_key)
+        query_embedding = await embed_text(query_text, openai_key)
+        index = _get_pinecone_index(pinecone_key)
         results = index.query(
             vector=query_embedding,
             top_k=top_k,
             namespace=chat_id,
-            include_metadata=True
+            include_metadata=True,
         )
-
-        # Format results
-        context_items = []
-        for match in results.matches:
-            context_items.append({
-                "message_id": match.id,
-                "score": match.score,
-                "metadata": match.metadata
-            })
-
+        context_items = [
+            {"message_id": m.id, "score": m.score, "metadata": m.metadata}
+            for m in results.matches
+        ]
         logger.info(f"Retrieved {len(context_items)} context items for chat {chat_id}")
         return context_items
-
     except Exception as e:
         logger.error(f"Failed to query vector store: {e}")
         return []
@@ -222,120 +144,271 @@ async def query_relevant_context(
 async def merge_vector_namespaces(
     source_chat_ids: List[str],
     target_chat_id: str,
+    pinecone_key: str,
+    openai_key: str,
 ) -> bool:
     """
-    Merge vectors from multiple source namespaces into a new target namespace.
+    Copy all vectors from source namespaces into the merged chat's namespace.
 
-    This copies all vectors from source chats into the merged chat's namespace,
-    allowing RAG retrieval across all source conversations.
+    Uses index.list() to enumerate IDs and index.fetch() to retrieve vectors —
+    the correct approach for Pinecone serverless. A dummy zero-vector query does
+    NOT reliably enumerate all vectors and must not be used.
 
-    Args:
-        source_chat_ids: List of source chat IDs (namespaces)
-        target_chat_id: Target chat ID (new namespace)
-
-    Returns:
-        True if successful, False otherwise
+    Returns True if at least one vector was successfully copied.
     """
-    if not is_configured():
+    if not pinecone_key:
+        logger.warning("merge_vector_namespaces: no Pinecone key provided")
         return False
 
     try:
-        index = get_index()
+        await ensure_index_exists(pinecone_key)
+        index = _get_pinecone_index(pinecone_key)
         total_copied = 0
+        FETCH_BATCH = 200
+        UPSERT_BATCH = 100
 
         for source_id in source_chat_ids:
             try:
-                # Fetch all vectors from source namespace
-                # Pinecone doesn't have a direct "copy namespace" operation,
-                # so we need to fetch and re-upsert with new namespace
+                # Enumerate all vector IDs via the list API (serverless only)
+                all_ids: List[str] = []
+                for id_batch in index.list(namespace=source_id):
+                    if isinstance(id_batch, list):
+                        all_ids.extend(id_batch)
+                    else:
+                        all_ids.append(id_batch)
 
-                # Query with a dummy vector to get all vectors
-                # (This is a limitation - for large namespaces, we'd need pagination)
-                dummy_vector = [0.0] * EMBEDDING_DIMENSION
-                results = index.query(
-                    vector=dummy_vector,
-                    top_k=10000,  # Max results per query
-                    namespace=source_id,
-                    include_metadata=True,
-                    include_values=True
-                )
-
-                if not results.matches:
+                if not all_ids:
+                    logger.info(f"No vectors in namespace {source_id}, skipping")
                     continue
 
-                # Prepare vectors for upsert to target namespace
+                logger.info(f"Found {len(all_ids)} vectors in namespace {source_id}")
+
+                # Fetch actual vectors (with values) in batches
                 vectors_to_upsert = []
-                for match in results.matches:
-                    # Generate new ID to avoid conflicts
-                    new_id = f"{source_id}_{match.id}"
+                for i in range(0, len(all_ids), FETCH_BATCH):
+                    batch_ids = all_ids[i:i + FETCH_BATCH]
+                    fetch_result = index.fetch(ids=batch_ids, namespace=source_id)
+                    for original_id, vec in fetch_result.vectors.items():
+                        metadata = dict(vec.metadata or {})
+                        metadata["source_chat_id"] = source_id
+                        metadata["original_chat_id"] = metadata.get("chat_id", source_id)
+                        metadata["chat_id"] = target_chat_id
+                        vectors_to_upsert.append({
+                            "id": f"{source_id}_{original_id}",
+                            "values": vec.values,
+                            "metadata": metadata,
+                        })
 
-                    # Update metadata to indicate source
-                    metadata = match.metadata or {}
-                    metadata["source_chat_id"] = source_id
-                    metadata["original_chat_id"] = metadata.get("chat_id", source_id)
-                    metadata["chat_id"] = target_chat_id  # Update to target
-
-                    vectors_to_upsert.append({
-                        "id": new_id,
-                        "values": match.values,
-                        "metadata": metadata
-                    })
-
-                # Upsert to target namespace in batches
-                batch_size = 100
-                for i in range(0, len(vectors_to_upsert), batch_size):
-                    batch = vectors_to_upsert[i:i + batch_size]
+                # Upsert into target namespace
+                for i in range(0, len(vectors_to_upsert), UPSERT_BATCH):
+                    batch = vectors_to_upsert[i:i + UPSERT_BATCH]
                     index.upsert(vectors=batch, namespace=target_chat_id)
                     total_copied += len(batch)
 
-                logger.info(f"Copied {len(vectors_to_upsert)} vectors from {source_id} to {target_chat_id}")
+                logger.info(f"Copied {len(vectors_to_upsert)} vectors from {source_id} → {target_chat_id}")
 
             except Exception as e:
-                logger.error(f"Failed to copy vectors from {source_id}: {e}")
+                logger.error(f"Failed to copy vectors from namespace {source_id}: {e}")
                 continue
 
-        logger.info(f"Merge complete: {total_copied} total vectors in namespace {target_chat_id}")
-        return True
+        logger.info(f"Namespace merge complete: {total_copied} total vectors in {target_chat_id}")
+        return total_copied > 0
 
     except Exception as e:
         logger.error(f"Failed to merge vector namespaces: {e}")
         return False
 
 
-async def delete_namespace(chat_id: str):
+async def fuse_namespaces(
+    source_chat_ids: List[str],
+    target_chat_id: str,
+    pinecone_key: str,
+    threshold: float = 0.82,
+) -> Dict[str, int]:
     """
-    Delete all vectors in a namespace (when deleting a chat).
+    Intelligently fuse vector namespaces from multiple source chats.
 
-    Args:
-        chat_id: Chat ID (namespace to delete)
+    Algorithm:
+      - Initialize working set with all vectors from first source
+      - For each subsequent source vector:
+          - Compute cosine similarity with every vector in working set (locally, via numpy)
+          - If best similarity >= threshold: fuse (average embeddings, merge metadata)
+          - Else: add as unique vector (keep both)
+      - Upsert entire working set into target namespace
+
+    Result size: anywhere from max(|A|,|B|) to |A|+|B|, depending on overlap.
+    Threshold 0.82 targets ~middle of that range.
+
+    Returns {"fused": int, "kept": int, "total": int} on success.
+    Raises on failure — caller should fall back to merge_vector_namespaces.
     """
+    if not pinecone_key:
+        raise ValueError("Pinecone key is required for fuse_namespaces")
+
+    await ensure_index_exists(pinecone_key)
+    index = _get_pinecone_index(pinecone_key)
+
+    FETCH_BATCH = 200
+    UPSERT_BATCH = 100
+
+    def _fetch_all_vectors(source_id: str) -> List[Dict]:
+        """Fetch all vectors from a namespace."""
+        all_ids: List[str] = []
+        for id_batch in index.list(namespace=source_id):
+            if isinstance(id_batch, list):
+                all_ids.extend(id_batch)
+            else:
+                all_ids.append(id_batch)
+        if not all_ids:
+            return []
+        vectors = []
+        for i in range(0, len(all_ids), FETCH_BATCH):
+            batch_ids = all_ids[i:i + FETCH_BATCH]
+            fetch_result = index.fetch(ids=batch_ids, namespace=source_id)
+            for vid, vec in fetch_result.vectors.items():
+                vectors.append({
+                    "id": vid,
+                    "values": vec.values,
+                    "metadata": dict(vec.metadata or {}),
+                })
+        return vectors
+
+    # Fetch vectors from all source namespaces
+    source_vectors: List[Tuple[str, List[Dict]]] = []
+    for source_id in source_chat_ids:
+        vecs = _fetch_all_vectors(source_id)
+        logger.info(f"fuse_namespaces: fetched {len(vecs)} vectors from namespace {source_id}")
+        source_vectors.append((source_id, vecs))
+
+    if all(len(v) == 0 for _, v in source_vectors):
+        logger.warning("fuse_namespaces: all source namespaces empty, nothing to fuse")
+        return {"fused": 0, "kept": 0, "total": 0}
+
+    # Initialize working set from first non-empty source
+    working_set: List[Dict] = []
+    first_source_id = source_chat_ids[0]
+    for source_id, vecs in source_vectors:
+        if vecs:
+            first_source_id = source_id
+            for vec in vecs:
+                working_set.append({
+                    "id": f"{source_id}_{vec['id']}",
+                    "values": np.array(vec["values"], dtype=np.float32),
+                    "metadata": {
+                        **vec["metadata"],
+                        "type": "kept",
+                        "source_chat_id": source_id,
+                        "chat_id": target_chat_id,
+                    },
+                })
+            break
+
+    logger.info(f"fuse_namespaces: initialized working set with {len(working_set)} vectors from {first_source_id}")
+
+    fused_count = 0
+    kept_count = 0
+
+    # Skip the first source (already in working set), fuse remaining into it
+    first_processed = False
+    for source_id, vecs in source_vectors:
+        if not first_processed:
+            first_processed = True
+            continue  # skip first source — already in working set
+        if not vecs:
+            continue
+
+        # Build numpy matrix for current working set
+        working_values = np.stack([w["values"] for w in working_set])  # (N, D)
+        working_norms = np.linalg.norm(working_values, axis=1, keepdims=False) + 1e-8  # (N,)
+
+        for vec in vecs:
+            query = np.array(vec["values"], dtype=np.float32)
+            query_norm = float(np.linalg.norm(query)) + 1e-8
+
+            # Cosine similarity with all working set vectors in one matmul
+            sims = working_values @ query / (working_norms * query_norm)  # (N,)
+            best_idx = int(np.argmax(sims))
+            best_sim = float(sims[best_idx])
+
+            if best_sim >= threshold:
+                # Fuse: average embeddings, merge metadata
+                nn = working_set[best_idx]
+                avg_values = (nn["values"] + query) / 2.0
+                norm = float(np.linalg.norm(avg_values)) + 1e-8
+                avg_values = avg_values / norm  # normalize
+
+                nn_content = nn["metadata"].get("content", "")
+                vec_content = vec["metadata"].get("content", "")
+
+                working_set[best_idx] = {
+                    "id": nn["id"],
+                    "values": avg_values,
+                    "metadata": {
+                        "type": "fused",
+                        "content": f"[A]: {nn_content}\n[B]: {vec_content}",
+                        "source_a_chat_id": first_source_id,
+                        "source_b_chat_id": source_id,
+                        "chat_id": target_chat_id,
+                    },
+                }
+                # Keep numpy matrix in sync
+                working_values[best_idx] = avg_values
+                working_norms[best_idx] = float(np.linalg.norm(avg_values)) + 1e-8
+                fused_count += 1
+            else:
+                # Unique: add to working set
+                working_set.append({
+                    "id": f"{source_id}_{vec['id']}",
+                    "values": query,
+                    "metadata": {
+                        **vec["metadata"],
+                        "type": "kept",
+                        "source_chat_id": source_id,
+                        "chat_id": target_chat_id,
+                    },
+                })
+                working_values = np.vstack([working_values, query.reshape(1, -1)])
+                working_norms = np.append(working_norms, float(np.linalg.norm(query)) + 1e-8)
+                kept_count += 1
+
+    logger.info(
+        f"fuse_namespaces: {fused_count} pairs fused, {kept_count} unique kept, "
+        f"{len(working_set)} total vectors → {target_chat_id}"
+    )
+
+    # Upsert working set into target namespace
+    upsert_vectors = [
+        {"id": w["id"], "values": w["values"].tolist(), "metadata": w["metadata"]}
+        for w in working_set
+    ]
+    for i in range(0, len(upsert_vectors), UPSERT_BATCH):
+        index.upsert(vectors=upsert_vectors[i:i + UPSERT_BATCH], namespace=target_chat_id)
+
+    logger.info(f"fuse_namespaces: upserted {len(upsert_vectors)} vectors into {target_chat_id}")
+    return {"fused": fused_count, "kept": kept_count, "total": len(upsert_vectors)}
+
+
+async def delete_namespace(chat_id: str, pinecone_key: str):
+    """Delete all vectors in a namespace when a chat is deleted."""
+    if not pinecone_key:
+        return
     try:
-        index = get_index()
+        index = _get_pinecone_index(pinecone_key)
         index.delete(delete_all=True, namespace=chat_id)
         logger.info(f"Deleted namespace {chat_id}")
     except Exception as e:
         logger.error(f"Failed to delete namespace {chat_id}: {e}")
 
 
-async def get_namespace_stats(chat_id: str) -> Dict[str, Any]:
-    """
-    Get statistics about a namespace.
-
-    Args:
-        chat_id: Chat ID (namespace)
-
-    Returns:
-        Dict with stats (vector count, etc.)
-    """
+async def get_namespace_stats(chat_id: str, pinecone_key: str) -> Dict[str, Any]:
+    """Get vector count for a chat namespace."""
+    if not pinecone_key:
+        return {"vector_count": 0}
     try:
-        index = get_index()
+        index = _get_pinecone_index(pinecone_key)
         stats = index.describe_index_stats()
-
-        namespace_stats = stats.namespaces.get(chat_id, {})
-
-        return {
-            "vector_count": namespace_stats.get("vector_count", 0)
-        }
+        ns = stats.namespaces.get(chat_id, {})
+        return {"vector_count": getattr(ns, "vector_count", 0)}
     except Exception as e:
         logger.error(f"Failed to get namespace stats: {e}")
         return {"vector_count": 0}

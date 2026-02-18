@@ -14,7 +14,6 @@ export interface AppState {
   isLoading: boolean;
   isStreaming: boolean;
   streamingContent: string;
-  streamingReasoning: string;
   error: string | null;
 
   // Modal state
@@ -55,7 +54,6 @@ export const useStore = create<AppState>((set, get) => ({
   isLoading: false,
   isStreaming: false,
   streamingContent: '',
-  streamingReasoning: '',
   error: null,
   showSettings: false,
   showMerge: false,
@@ -145,7 +143,7 @@ export const useStore = create<AppState>((set, get) => ({
     if (!state.currentChatId) return;
 
     try {
-      set({ error: null, isStreaming: true, streamingContent: '', streamingReasoning: '' });
+      set({ error: null, isStreaming: true, streamingContent: '' });
 
       // Upload files first if provided
       let attachmentIds: string[] | undefined;
@@ -160,7 +158,6 @@ export const useStore = create<AppState>((set, get) => ({
         chat_id: state.currentChatId,
         role: 'user',
         content,
-        reasoning_trace: null,
         created_at: new Date().toISOString(),
         attachments: attachmentIds ? files?.map((file, idx) => ({
           id: attachmentIds[idx],
@@ -178,20 +175,12 @@ export const useStore = create<AppState>((set, get) => ({
       }));
 
       let assistantContent = '';
-      let assistantReasoning = '';
 
       // Stream completion
       for await (const chunk of api.streamCompletion(state.currentChatId, content, attachmentIds)) {
         if (chunk.type === 'content') {
           assistantContent += chunk.data;
-          set((state) => ({
-            streamingContent: assistantContent,
-          }));
-        } else if (chunk.type === 'reasoning') {
-          assistantReasoning += chunk.data;
-          set((state) => ({
-            streamingReasoning: assistantReasoning,
-          }));
+          set((state) => ({ streamingContent: assistantContent }));
         } else if (chunk.type === 'done') {
           // Add complete assistant message
           const assistantMessage: Message = {
@@ -199,7 +188,6 @@ export const useStore = create<AppState>((set, get) => ({
             chat_id: state.currentChatId,
             role: 'assistant',
             content: assistantContent,
-            reasoning_trace: assistantReasoning || null,
             created_at: new Date().toISOString(),
           };
 
@@ -222,7 +210,6 @@ export const useStore = create<AppState>((set, get) => ({
       set({
         isStreaming: false,
         streamingContent: '',
-        streamingReasoning: '',
       });
       // Refresh chats list to update message counts
       await get().loadChats();
@@ -279,6 +266,10 @@ export const useStore = create<AppState>((set, get) => ({
         if (chunk.type === 'content') {
           set((state) => ({
             mergeProgress: state.mergeProgress + chunk.data,
+          }));
+        } else if (chunk.type === 'warning') {
+          set((state) => ({
+            mergeProgress: state.mergeProgress + `\n⚠ ${chunk.data}\n`,
           }));
         } else if (chunk.type === 'merge_complete') {
           mergedChatId = chunk.data;

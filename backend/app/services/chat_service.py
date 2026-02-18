@@ -72,13 +72,16 @@ async def update_chat(
 async def delete_chat(db: AsyncSession, chat_id: str) -> bool:
     """Delete a chat and all its messages, including vector store namespace"""
     from app.services import vector_service
+    from app.services.completion_service import _get_rag_keys
 
     chat = await get_chat(db, chat_id)
     if not chat:
         return False
 
-    # Delete vector namespace (non-blocking, fire and forget)
-    asyncio.create_task(vector_service.delete_namespace(chat_id))
+    # Delete vector namespace (fire and forget — needs Pinecone key from DB)
+    pinecone_key, _ = await _get_rag_keys(db)
+    if pinecone_key:
+        asyncio.create_task(vector_service.delete_namespace(chat_id, pinecone_key))
 
     await db.delete(chat)
     await db.commit()
@@ -101,7 +104,6 @@ async def create_message(
     chat_id: str,
     role: str,
     content: str,
-    reasoning_trace: Optional[str] = None
 ) -> Optional[Message]:
     """Create a message in a chat"""
     # Verify chat exists
@@ -114,7 +116,6 @@ async def create_message(
         chat_id=chat_id,
         role=role,
         content=content,
-        reasoning_trace=reasoning_trace,
     )
     db.add(message)
     await db.commit()

@@ -29,7 +29,6 @@ class MessageResponse(BaseModel):
     chat_id: str
     role: str
     content: str
-    reasoning_trace: Optional[str] = None
     created_at: Optional[str] = None
     attachments: List[AttachmentResponse] = []
 
@@ -41,6 +40,7 @@ class ChatResponse(BaseModel):
     provider: str
     model: str
     system_prompt: Optional[str] = None
+    is_merged: bool = False
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
     message_count: int
@@ -53,6 +53,7 @@ class ChatListItem(BaseModel):
     title: Optional[str] = None
     provider: str
     model: str
+    is_merged: bool = False
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
     message_count: int
@@ -63,7 +64,6 @@ class MessageCreate(BaseModel):
     """Create a new message"""
     role: str = Field(..., description="user or assistant")
     content: str
-    reasoning_trace: Optional[str] = None
 
 
 class CompletionRequest(BaseModel):
@@ -107,7 +107,7 @@ class MergeResponse(BaseModel):
 # Stream schemas
 class StreamChunk(BaseModel):
     """Chunk of streaming response"""
-    type: str = Field(..., description="content, reasoning, error, or done")
+    type: str = Field(..., description="content, error, done, warning, or merge_complete")
     data: str
 
 

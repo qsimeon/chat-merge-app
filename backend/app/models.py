@@ -14,6 +14,7 @@ class Chat(Base):
     provider = Column(String, nullable=False)  # "openai", "anthropic", "gemini"
     model = Column(String, nullable=False)
     system_prompt = Column(Text, nullable=True)
+    is_merged = Column(Boolean, default=False)  # True for vector-fused merged chats
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -33,6 +34,7 @@ class Chat(Base):
             "provider": self.provider,
             "model": self.model,
             "system_prompt": self.system_prompt,
+            "is_merged": bool(self.is_merged),
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "message_count": len(self.messages) if self.messages else 0,
@@ -54,7 +56,6 @@ class Message(Base):
     )
     role = Column(String, nullable=False)  # "user", "assistant", "system"
     content = Column(Text, nullable=False)
-    reasoning_trace = Column(Text, nullable=True)  # For extended thinking/CoT
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -73,7 +74,6 @@ class Message(Base):
             "chat_id": self.chat_id,
             "role": self.role,
             "content": self.content,
-            "reasoning_trace": self.reasoning_trace,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "attachments": [att.to_dict() for att in self.attachments] if self.attachments else [],
         }

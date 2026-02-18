@@ -41,7 +41,6 @@ async def get_chat_messages(
                 chat_id=msg.chat_id,
                 role=msg.role,
                 content=msg.content,
-                reasoning_trace=msg.reasoning_trace,
                 created_at=msg.created_at.isoformat() if msg.created_at else None,
             )
             for msg in messages

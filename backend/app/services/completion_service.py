@@ -1,7 +1,6 @@
 import logging
 import asyncio
 import base64
-from pathlib import Path
 from typing import AsyncGenerator, Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -15,92 +14,56 @@ from app.services import vector_service, storage_service
 
 logger = logging.getLogger(__name__)
 
-# RAG configuration
-USE_RAG = True  # Enable/disable RAG retrieval
-RAG_CONTEXT_LIMIT = 8  # Number of relevant messages to retrieve
-RECENT_MESSAGES_LIMIT = 10  # Always include N most recent messages
+USE_RAG = True
+RAG_CONTEXT_LIMIT = 8
+RECENT_MESSAGES_LIMIT = 10
 
 
 async def get_api_key(db: AsyncSession, provider: str) -> Optional[str]:
-    """Get and decrypt API key for a provider"""
+    """Get and decrypt API key for a provider."""
     result = await db.execute(
-        select(APIKey)
-        .where(APIKey.provider == provider)
-        .where(APIKey.is_active == True)
+        select(APIKey).where(APIKey.provider == provider).where(APIKey.is_active == True)
     )
-    api_key_record = result.scalar_one_or_none()
-    if not api_key_record:
+    record = result.scalar_one_or_none()
+    if not record:
         logger.warning(f"No active API key found for provider: {provider}")
         return None
-
     try:
-        decrypted_key = decrypt_key(api_key_record.encrypted_key)
-        return decrypted_key
+        return decrypt_key(record.encrypted_key)
     except Exception as e:
-        logger.error(f"Failed to decrypt API key for {provider}: {str(e)}")
+        logger.error(f"Failed to decrypt API key for {provider}: {e}")
         return None
 
 
 async def _load_attachment_data(attachment: Attachment) -> Optional[dict]:
-    """Load attachment file data and encode as base64 (supports local + cloud storage)"""
+    """Load attachment file and base64-encode it."""
     try:
         file_data = await storage_service.get_file(attachment.storage_path)
         if not file_data:
             logger.warning(f"Attachment file not found: {attachment.storage_path}")
             return None
-
-        base64_data = base64.b64encode(file_data).decode('utf-8')
-
         return {
             "id": attachment.id,
             "file_name": attachment.file_name,
             "file_type": attachment.file_type,
             "file_size": attachment.file_size,
-            "data": base64_data
+            "data": base64.b64encode(file_data).decode('utf-8'),
         }
     except Exception as e:
-        logger.error(f"Error loading attachment {attachment.id}: {str(e)}")
+        logger.error(f"Error loading attachment {attachment.id}: {e}")
         return None
 
 
-async def _build_message_history(messages: list[Message], include_reasoning: bool = True) -> list[dict]:
-    """
-    Build message history for sending to a provider.
-
-    For merged chats, reasoning traces from prior conversations are included
-    as part of the assistant message content so the model can "see" the
-    thinking that went into previous responses.
-
-    Args:
-        messages: List of Message ORM objects
-        include_reasoning: Whether to include reasoning traces in the context
-
-    Returns:
-        List of message dicts with 'role', 'content', and optional 'attachments'
-    """
+async def _build_message_history(messages: list[Message]) -> list[dict]:
+    """Convert Message ORM objects to provider-ready message dicts."""
     history = []
-
     for msg in messages:
         if msg.role == "system":
-            # System messages are context markers from merges —
-            # include them so the model knows which conversation it's reading from
             history.append({"role": "user", "content": f"[System context: {msg.content}]"})
             continue
 
-        content = msg.content
+        msg_dict = {"role": msg.role, "content": msg.content}
 
-        # For assistant messages with reasoning traces, embed the trace
-        # so the model can see its prior thinking when continuing the conversation.
-        # This is especially valuable for merged chats where the full context matters.
-        if include_reasoning and msg.role == "assistant" and msg.reasoning_trace:
-            content = (
-                f"<reasoning_trace>\n{msg.reasoning_trace}\n</reasoning_trace>\n\n"
-                f"{content}"
-            )
-
-        msg_dict = {"role": msg.role, "content": content}
-
-        # Load attachments if present
         if msg.attachments:
             attachments_data = []
             for att in msg.attachments:
@@ -111,7 +74,6 @@ async def _build_message_history(messages: list[Message], include_reasoning: boo
                 msg_dict["attachments"] = attachments_data
 
         history.append(msg_dict)
-
     return history
 
 
@@ -119,61 +81,100 @@ async def _build_rag_context(
     db: AsyncSession,
     chat_id: str,
     query_text: str,
-    recent_messages: List[Message]
+    recent_messages: List[Message],
+    pinecone_key: str,
+    openai_key: str,
 ) -> List[dict]:
-    """
-    Build context using RAG retrieval.
-
-    Combines:
-    1. Recent messages (for conversation continuity)
-    2. Relevant historical messages (via vector similarity search)
-
-    Args:
-        db: Database session
-        chat_id: Chat ID
-        query_text: Query text for retrieval
-        recent_messages: Recent messages to always include
-
-    Returns:
-        List of message dicts for the LLM
-    """
+    """RAG context for regular (non-merged) chats: recent messages + vector-retrieved historical messages."""
     try:
-        # Get relevant messages via vector search
         relevant_context = await vector_service.query_relevant_context(
             chat_id=chat_id,
             query_text=query_text,
-            top_k=RAG_CONTEXT_LIMIT
+            pinecone_key=pinecone_key,
+            openai_key=openai_key,
+            top_k=RAG_CONTEXT_LIMIT,
         )
 
-        # Get message IDs that are already in recent messages
-        recent_msg_ids = {msg.id for msg in recent_messages}
+        if relevant_context:
+            logger.info(f"RAG retrieved {len(relevant_context)} messages for chat {chat_id}:")
+            for item in relevant_context:
+                logger.info(f"  [{item['metadata'].get('role','?')}] score={item['score']:.3f} | {item['metadata'].get('content','')[:80]!r}")
+        else:
+            logger.warning(f"RAG returned 0 results for chat {chat_id}")
 
-        # Fetch full message objects for relevant context
+        recent_msg_ids = {msg.id for msg in recent_messages}
         relevant_msg_ids = [
             item["message_id"] for item in relevant_context
-            if item["message_id"] not in recent_msg_ids  # Avoid duplicates
+            if item["message_id"] not in recent_msg_ids
         ]
 
         if relevant_msg_ids:
-            result = await db.execute(
-                select(Message).where(Message.id.in_(relevant_msg_ids))
-            )
+            result = await db.execute(select(Message).where(Message.id.in_(relevant_msg_ids)))
             relevant_messages = result.scalars().all()
         else:
             relevant_messages = []
 
-        # Combine: relevant historical messages + recent messages
-        # Sort by timestamp to maintain chronological order
-        all_messages = list(relevant_messages) + list(recent_messages)
-        all_messages.sort(key=lambda m: m.created_at or "")
-
-        # Build message history
-        return await _build_message_history(all_messages, include_reasoning=True)
+        all_context = sorted(
+            list(relevant_messages) + list(recent_messages),
+            key=lambda m: m.created_at or ""
+        )
+        logger.info(f"RAG context: {len(relevant_messages)} retrieved + {len(recent_messages)} recent = {len(all_context)} total")
+        return await _build_message_history(all_context)
 
     except Exception as e:
         logger.warning(f"RAG retrieval failed, falling back to recent messages: {e}")
-        # Fallback to just recent messages
-        return await _build_message_history(recent_messages, include_reasoning=True)
+        return await _build_message_history(recent_messages)
+
+
+async def _build_merged_chat_context(
+    chat_id: str,
+    user_query: str,
+    prior_messages: List[Message],
+    pinecone_key: str,
+    openai_key: str,
+) -> tuple[str, List[dict]]:
+    """
+    Build context for merged chats via the fused RAG namespace.
+
+    Returns (rag_context_block, recent_history):
+      - rag_context_block is injected into the dynamic system prompt
+      - recent_history covers the AI intro + any exchanges since the merge
+    """
+    hits = await vector_service.query_relevant_context(
+        chat_id=chat_id,
+        query_text=user_query,
+        pinecone_key=pinecone_key,
+        openai_key=openai_key,
+        top_k=8,
+    )
+
+    if hits:
+        logger.info(f"Merged chat RAG: {len(hits)} hits for chat {chat_id}:")
+        for hit in hits:
+            vec_type = hit["metadata"].get("type", "kept")
+            source = hit["metadata"].get("source_chat_id", "?")[:8]
+            logger.info(f"  [{vec_type}] score={hit['score']:.3f} src={source} | {hit['metadata'].get('content','')[:80]!r}")
+    else:
+        logger.warning(f"Merged chat RAG returned 0 hits for chat {chat_id}")
+
+    context_lines = ["[Retrieved context from merged conversations — most relevant to your query]", "---"]
+    for hit in hits:
+        metadata = hit["metadata"]
+        content = metadata.get("content", "")
+        if metadata.get("type") == "fused":
+            context_lines.append(content)
+        else:
+            context_lines.append(f"[{metadata.get('role', 'assistant')}]: {content}")
+        context_lines.append("---")
+
+    rag_context_block = "\n".join(context_lines) if hits else ""
+    recent_history = await _build_message_history(prior_messages)
+    return rag_context_block, recent_history
+
+
+async def _get_rag_keys(db: AsyncSession):
+    """Fetch Pinecone and OpenAI keys from DB."""
+    return await get_api_key(db, "pinecone"), await get_api_key(db, "openai")
 
 
 async def stream_chat_completion(
@@ -184,34 +185,16 @@ async def stream_chat_completion(
     max_tokens: Optional[int] = None,
     attachment_ids: Optional[List[str]] = None,
 ) -> AsyncGenerator[StreamChunk, None]:
-    """
-    Stream a chat completion and save to database.
-
-    Uses RAG retrieval for merged chats to provide relevant context without
-    hitting token limits. Falls back to recent messages if RAG is unavailable.
-
-    Args:
-        db: Database session
-        chat_id: Chat ID
-        user_content: User message content
-        temperature: Sampling temperature
-        max_tokens: Max tokens to generate
-        attachment_ids: Optional list of attachment IDs
-
-    Yields:
-        StreamChunk objects
-    """
+    """Stream a chat completion, save to DB, and store vectors."""
     try:
-        # Load chat
         chat = await get_chat(db, chat_id)
         if not chat:
             yield StreamChunk(type="error", data="Chat not found")
             return
 
-        # Get previous messages (all or recent based on RAG)
+        # Snapshot messages before saving the new user message
         all_messages = await get_messages(db, chat_id)
 
-        # Save user message to DB first (so we have a message_id for attachments)
         user_msg = await create_message(db, chat_id, "user", user_content)
         if not user_msg:
             yield StreamChunk(type="error", data="Failed to save user message")
@@ -220,115 +203,112 @@ async def stream_chat_completion(
         # Handle attachments
         current_attachment_data = []
         if attachment_ids:
-            result = await db.execute(
-                select(Attachment).where(Attachment.id.in_(attachment_ids))
-            )
+            result = await db.execute(select(Attachment).where(Attachment.id.in_(attachment_ids)))
             attachments = result.scalars().all()
             if attachments:
-                # Associate attachments with the new user message
                 for att in attachments:
                     att.message_id = user_msg.id
                 await db.commit()
-
-                # Load attachment data for API call
                 for att in attachments:
-                    att_data = _load_attachment_data(att)
+                    att_data = await _load_attachment_data(att)
                     if att_data:
                         current_attachment_data.append(att_data)
 
-        # Build context using RAG if enabled (for merged chats with many messages)
-        if USE_RAG and len(all_messages) > RECENT_MESSAGES_LIMIT:
-            # Use recent messages + RAG-retrieved relevant messages
+        pinecone_key, openai_key = await _get_rag_keys(db)
+        rag_available = bool(pinecone_key and openai_key)
+
+        is_merged = bool(chat.is_merged)
+        dynamic_system_prompt = chat.system_prompt
+
+        if is_merged:
+            if rag_available:
+                logger.info(f"Merged chat {chat_id}: building RAG context")
+                rag_context_block, message_history = await _build_merged_chat_context(
+                    chat_id=chat_id,
+                    user_query=user_content,
+                    prior_messages=all_messages,
+                    pinecone_key=pinecone_key,
+                    openai_key=openai_key,
+                )
+                if rag_context_block:
+                    dynamic_system_prompt = ((chat.system_prompt or "") + "\n\n" + rag_context_block).strip()
+            else:
+                logger.warning(f"Merged chat {chat_id}: RAG keys not configured — using recent messages only")
+                message_history = await _build_message_history(all_messages)
+        elif USE_RAG and rag_available and len(all_messages) > RECENT_MESSAGES_LIMIT:
             recent_messages = all_messages[-RECENT_MESSAGES_LIMIT:]
             message_history = await _build_rag_context(
-                db, chat_id, user_content, recent_messages
+                db, chat_id, user_content, recent_messages,
+                pinecone_key=pinecone_key, openai_key=openai_key,
             )
-            logger.info(f"Using RAG context for chat {chat_id} ({len(all_messages)} total messages)")
+            logger.info(f"Using RAG for chat {chat_id} ({len(all_messages)} total messages)")
         else:
-            # For short conversations, use full history
-            message_history = await _build_message_history(all_messages, include_reasoning=True)
+            if USE_RAG and len(all_messages) > RECENT_MESSAGES_LIMIT and not rag_available:
+                logger.info("RAG skipped: Pinecone or OpenAI key not configured")
+            message_history = await _build_message_history(all_messages)
 
         # Store user message vector (fire and forget)
-        asyncio.create_task(vector_service.store_message_vector(
-            chat_id=chat_id,
-            message_id=user_msg.id,
-            content=user_content,
-            role="user",
-            attachments=[{"file_name": a["file_name"]} for a in current_attachment_data] if current_attachment_data else None
-        ))
+        if rag_available:
+            asyncio.create_task(vector_service.store_message_vector(
+                chat_id=chat_id,
+                message_id=user_msg.id,
+                content=user_content,
+                role="user",
+                pinecone_key=pinecone_key,
+                openai_key=openai_key,
+                attachments=[{"file_name": a["file_name"]} for a in current_attachment_data] or None,
+            ))
 
-        # Add current user message to history
         current_msg_dict = {"role": "user", "content": user_content}
         if current_attachment_data:
             current_msg_dict["attachments"] = current_attachment_data
         message_history.append(current_msg_dict)
 
-        # Get API key
         api_key = await get_api_key(db, chat.provider)
         if not api_key:
-            yield StreamChunk(
-                type="error",
-                data=f"No API key configured for provider: {chat.provider}"
-            )
+            yield StreamChunk(type="error", data=f"No API key configured for provider: {chat.provider}")
             return
 
-        # Create provider
         try:
             provider = create_provider(chat.provider, api_key)
         except Exception as e:
-            yield StreamChunk(type="error", data=f"Failed to create provider: {str(e)}")
+            yield StreamChunk(type="error", data=f"Failed to create provider: {e}")
             return
 
-        # Stream completion
         accumulated_content = ""
-        accumulated_reasoning = ""
 
         async for chunk in provider.stream_completion(
             messages=message_history,
             model=chat.model,
-            system_prompt=chat.system_prompt,
+            system_prompt=dynamic_system_prompt,
             temperature=temperature,
             max_tokens=max_tokens,
         ):
             if chunk.type == "content":
                 accumulated_content += chunk.data
                 yield chunk
-            elif chunk.type == "reasoning":
-                accumulated_reasoning += chunk.data
-                yield chunk
             elif chunk.type == "error":
                 yield chunk
             elif chunk.type == "done":
-                # Save assistant message with reasoning trace
                 if accumulated_content:
-                    assistant_msg = await create_message(
-                        db,
-                        chat_id,
-                        "assistant",
-                        accumulated_content,
-                        reasoning_trace=accumulated_reasoning if accumulated_reasoning else None
-                    )
+                    assistant_msg = await create_message(db, chat_id, "assistant", accumulated_content)
                     if assistant_msg:
                         logger.info(f"Saved assistant message to chat {chat_id}")
-
-                        # Store assistant message vector (fire and forget)
-                        asyncio.create_task(vector_service.store_message_vector(
-                            chat_id=chat_id,
-                            message_id=assistant_msg.id,
-                            content=accumulated_content,
-                            role="assistant",
-                            reasoning_trace=accumulated_reasoning if accumulated_reasoning else None
-                        ))
-
+                        if rag_available:
+                            asyncio.create_task(vector_service.store_message_vector(
+                                chat_id=chat_id,
+                                message_id=assistant_msg.id,
+                                content=accumulated_content,
+                                role="assistant",
+                                pinecone_key=pinecone_key,
+                                openai_key=openai_key,
+                            ))
                         yield StreamChunk(type="done", data=assistant_msg.id)
                     else:
-                        yield StreamChunk(
-                            type="error",
-                            data="Failed to save assistant response"
-                        )
+                        yield StreamChunk(type="error", data="Failed to save assistant response")
                 else:
                     yield StreamChunk(type="done", data="")
 
     except Exception as e:
-        logger.error(f"Completion streaming error: {str(e)}")
-        yield StreamChunk(type="error", data=f"Streaming error: {str(e)}")
+        logger.error(f"Completion streaming error: {e}")
+        yield StreamChunk(type="error", data=f"Streaming error: {e}")
