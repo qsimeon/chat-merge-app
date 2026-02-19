@@ -33,7 +33,13 @@ This file provides guidance to AI coding agents (Claude Code, Cursor, Copilot, e
 
 5. **Vector storage is fire-and-forget**: `asyncio.create_task(vector_service.store_message_vector(...))` — failures are logged but never block message creation.
 
-6. **RAG is opt-in**: Check `vector_service.is_configured()` before any Pinecone operations. The app must work fully without it.
+6. **RAG check before Pinecone ops**: Call `vector_service.is_configured()` before any Pinecone operations. App works without Pinecone (falls back to simple union merge).
+
+7. **Merged chats have `is_merged=True` and zero copied messages**: Context comes entirely from the fused Pinecone namespace via RAG. Never copy source messages into a merged chat.
+
+8. **Strip leading non-user messages before provider calls**: Both Gemini and Anthropic require the first message in history to be `role="user"`. The merged chat intro message is `role="assistant"`, so `completion_service` strips leading non-user messages before calling any provider.
+
+9. **`LLM_PROVIDER_LABELS` for chat/merge UI**: Use `LLM_PROVIDER_LABELS` (openai/anthropic/gemini only), not `PROVIDER_LABELS` (which includes `pinecone`). Pinecone is a vector store, not a chat provider.
 
 ## Commands
 
@@ -44,8 +50,7 @@ This file provides guidance to AI coding agents (Claude Code, Cursor, Copilot, e
 
 # Backend only (with hot reload)
 cd backend
-conda activate work_env
-uvicorn main:app --reload --port 8000
+uv run uvicorn main:app --reload --port 8000
 
 # Frontend only (with hot reload, proxies API to :8000)
 cd frontend
@@ -59,7 +64,13 @@ cd frontend && npm run build
 
 ### Testing Backend Imports
 ```bash
-cd backend && python -c "from main import app; print('OK')"
+cd backend && uv run python -c "from main import app; print('OK')"
+```
+
+### Running Playwright Tests
+```bash
+# Requires frontend at :5173 and backend at :8000
+python3 tests/playwright_full_test.py
 ```
 
 ## Adding a New Provider
@@ -72,17 +83,21 @@ cd backend && python -c "from main import app; print('OK')"
 
 2. Register in `backend/app/providers/factory.py`
 
-3. Add models to `frontend/src/types.ts` in `PROVIDER_MODELS` and `PROVIDER_LABELS`
+3. Add models to `frontend/src/types.ts` in `PROVIDER_MODELS` and `LLM_PROVIDER_LABELS` (NOT `PROVIDER_LABELS` — that one includes Pinecone and is only for the Settings modal)
 
 ## Database Schema
 
 ```
-Chat: id, title, provider, model, system_prompt, created_at, updated_at
-  └── Message: id, chat_id, role, content, reasoning_trace, created_at
-        └── Attachment: id, message_id, file_name, file_type, file_size, storage_path
+Chat: id, title, provider, model, system_prompt, is_merged, created_at, updated_at
+  └── Message: id, chat_id, role, content, created_at
+        └── Attachment: id, message_id, file_name, file_type, file_size, storage_path, created_at
 APIKey: id, provider (unique), encrypted_key, is_active
 MergeHistory: id, source_chat_ids (JSON), merged_chat_id, merge_model
 ```
+
+- `Chat.is_merged` — set `True` for merged chats; drives always-RAG context path in completion_service
+- `Message.reasoning_trace` column was removed from the active schema
+- `Attachment.storage_path` points to `backend/uploads/{uuid}` locally, or a Vercel Blob URL in production
 
 Never store API keys in plaintext — always use `encryption_service.encrypt_key()` before saving.
 
@@ -162,6 +177,7 @@ myAction: () => {
 | File uploads | `backend/app/routes/attachments.py`, `backend/app/services/storage_service.py` |
 | Frontend state | `frontend/src/store.ts`, `frontend/src/api.ts` |
 | Database schema | `backend/app/models.py`, `backend/app/database.py` |
+| Provider dropdowns (UI) | `frontend/src/types.ts` — use `LLM_PROVIDER_LABELS`, not `PROVIDER_LABELS` |
 
 ## Deployment Notes
 

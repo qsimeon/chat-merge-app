@@ -5,7 +5,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session
-from app.schemas import CompletionRequest, MessageResponse
+from app.schemas import CompletionRequest, MessageResponse, AttachmentResponse
 from app.services.chat_service import get_messages, get_chat
 from app.services.completion_service import stream_chat_completion
 
@@ -42,6 +42,18 @@ async def get_chat_messages(
                 role=msg.role,
                 content=msg.content,
                 created_at=msg.created_at.isoformat() if msg.created_at else None,
+                attachments=[
+                    AttachmentResponse(
+                        id=att.id,
+                        message_id=att.message_id,
+                        file_name=att.file_name,
+                        file_type=att.file_type,
+                        file_size=att.file_size,
+                        storage_path=att.storage_path,
+                        created_at=att.created_at.isoformat() if att.created_at else None,
+                    )
+                    for att in (msg.attachments or [])
+                ],
             )
             for msg in messages
         ]

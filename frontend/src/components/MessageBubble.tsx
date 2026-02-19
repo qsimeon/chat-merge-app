@@ -1,3 +1,4 @@
+import React from 'react';
 import { Message } from '../types';
 import { FileText, Download } from 'lucide-react';
 import { api } from '../api';
@@ -20,17 +21,17 @@ function formatContent(content: string): React.ReactNode[] {
 
   matches.forEach((codeBlock) => {
     if (codeBlock.index > lastIndex) {
-      parts.push(formatInlineContent(content.substring(lastIndex, codeBlock.index)));
+      parts.push(<React.Fragment key={`inline-${lastIndex}`}>{formatInlineContent(content.substring(lastIndex, codeBlock.index))}</React.Fragment>);
     }
     parts.push(<pre key={`code-${codeBlock.index}`}><code>{codeBlock.content.trim()}</code></pre>);
     lastIndex = codeBlock.index + codeBlock.length;
   });
 
   if (lastIndex < content.length) {
-    parts.push(formatInlineContent(content.substring(lastIndex)));
+    parts.push(<React.Fragment key={`inline-${lastIndex}`}>{formatInlineContent(content.substring(lastIndex))}</React.Fragment>);
   }
 
-  return parts.length > 0 ? parts : [formatInlineContent(content)];
+  return parts.length > 0 ? parts : [<React.Fragment key="root">{formatInlineContent(content)}</React.Fragment>];
 }
 
 function formatInlineContent(text: string): React.ReactNode {
@@ -53,11 +54,15 @@ function formatInlineContent(text: string): React.ReactNode {
       {Array.isArray(content)
         ? content.map((part, idx) => {
             if (typeof part === 'string') {
-              return part.split(/(\*\*[^*]+\*\*|\n)/).map((seg, i) => {
-                if (seg === '\n') return <br key={`br-${idx}-${i}`} />;
-                if (seg.startsWith('**') && seg.endsWith('**')) return <strong key={`bold-${idx}-${i}`}>{seg.slice(2, -2)}</strong>;
-                return <span key={`text-${idx}-${i}`}>{seg}</span>;
-              });
+              return (
+                <React.Fragment key={`seg-${idx}`}>
+                  {part.split(/(\*\*[^*]+\*\*|\n)/).map((seg, i) => {
+                    if (seg === '\n') return <br key={`br-${i}`} />;
+                    if (seg.startsWith('**') && seg.endsWith('**')) return <strong key={`bold-${i}`}>{seg.slice(2, -2)}</strong>;
+                    return <span key={`text-${i}`}>{seg}</span>;
+                  })}
+                </React.Fragment>
+              );
             }
             return part;
           })

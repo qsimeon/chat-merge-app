@@ -6,204 +6,133 @@ Copy everything below this line and paste it as your first message when starting
 
 ## Context: What This Project Is
 
-You are continuing development on **ChatMerge**, a multi-provider AI chat application with a unique "merge chats" feature. The app connects to OpenAI, Anthropic, and Google Gemini APIs through a single ChatGPT/Claude-like dark-themed interface. Its killer feature is the ability to merge separate conversations so that when you continue chatting in the merged conversation, the model has the full context (all messages, files, and reasoning traces) from all source chats.
+You are continuing development on **ChatMerge**, a multi-provider AI chat application with a unique "merge chats" feature. The app connects to OpenAI, Anthropic, and Google Gemini APIs through a single ChatGPT/Claude-like dark-themed interface. Its core feature is vector-fusion merging: when you merge two conversations, their Pinecone vector namespaces are intelligently fused (nearest-neighbor + averaging), and the resulting merged chat uses RAG exclusively for context — no message copying, no context-window blowup.
 
-**The motivation**: People constantly have great conversations across different AI chats but can't combine them. ChatMerge solves this by letting you merge any two (or more) conversations into one, preserving the complete context including internal reasoning traces.
+**The motivation**: People have great conversations spread across different AI systems but can't combine them. ChatMerge solves this by semantically fusing the vector representations of conversations, then letting you continue chatting against that fused semantic memory.
 
-The project was built from scratch over several sessions. It works — chats with all 3 providers stream correctly, merge works, reasoning traces are captured from Anthropic (extended thinking) and OpenAI (o-series reasoning summaries), and the dark-themed UI is functional. But there are three major feature additions / architectural changes to implement now.
+The project is feature-complete for its v1 demo. All three providers work, merging with vector fusion works, file/image uploads work, the dark-themed UI is functional, and a full Playwright test suite passes (9/9).
 
 ## Current Architecture
 
 ### Tech Stack
-- **Backend**: Python FastAPI (async), SQLAlchemy ORM, SQLite via aiosqlite, Fernet encryption for API keys
+- **Backend**: Python FastAPI (async), SQLAlchemy ORM, SQLite via aiosqlite, Fernet encryption for API keys, uv for package management
 - **Frontend**: React 18 + TypeScript + Vite + Zustand (state management) + Lucide icons
+- **Vector Store**: Pinecone serverless, `text-embedding-3-small` embeddings, one namespace per chat
 - **Streaming**: Server-Sent Events (SSE) via `StreamingResponse` with manual `data: {json}\n\n` formatting
-- **No auth** currently — single-user local app
+- **File Storage**: Local `backend/uploads/` (dev) or Vercel Blob (prod)
+- **No auth** — single-user local app
 
 ### Directory Structure
 ```
 chat-merge-app/
 ├── backend/
 │   ├── main.py                          # FastAPI app, CORS, static file serving, startup
-│   ├── requirements.txt                 # Python deps
+│   ├── requirements.txt                 # Python deps (also pyproject.toml for uv)
 │   ├── app/
-│   │   ├── database.py                  # SQLAlchemy async engine, sqlite+aiosqlite
-│   │   ├── models.py                    # ORM: Chat, Message, APIKey, MergeHistory
-│   │   ├── schemas.py                   # Pydantic request/response models
+│   │   ├── database.py                  # SQLAlchemy async engine, startup migration for is_merged col
+│   │   ├── models.py                    # ORM: Chat (is_merged), Message, Attachment, APIKey, MergeHistory
+│   │   ├── schemas.py                   # Pydantic request/response models (includes AttachmentResponse)
 │   │   ├── providers/
 │   │   │   ├── base.py                  # Abstract BaseProvider + StreamChunk dataclass
 │   │   │   ├── factory.py               # create_provider() factory
-│   │   │   ├── openai_provider.py       # OpenAI + o-series reasoning capture
-│   │   │   ├── anthropic_provider.py    # Anthropic + extended thinking enabled
+│   │   │   ├── openai_provider.py       # OpenAI — images via base64 content blocks
+│   │   │   ├── anthropic_provider.py    # Anthropic — images via base64 content blocks
 │   │   │   └── gemini_provider.py       # google-genai SDK (not google-generativeai)
 │   │   ├── routes/
-│   │   │   ├── chats.py                 # CRUD: /api/chats
-│   │   │   ├── messages.py              # Streaming: /api/chats/{id}/completions
-│   │   │   ├── api_keys.py             # Key management: /api/api-keys
-│   │   │   └── merge.py                # Merge streaming: /api/merge
+│   │   │   ├── chats.py                 # CRUD: /api/chats (includes is_merged in responses)
+│   │   │   ├── messages.py              # Streaming: /api/chats/{id}/completions; GET includes attachments
+│   │   │   ├── attachments.py           # Upload/download: /api/attachments
+│   │   │   ├── api_keys.py              # Key management: /api/api-keys
+│   │   │   └── merge.py                 # Merge streaming: /api/merge
 │   │   └── services/
 │   │       ├── chat_service.py          # Chat/message CRUD operations
-│   │       ├── completion_service.py    # Streaming + reasoning trace context building
-│   │       ├── merge_service.py         # Full-context merge (copies ALL messages)
+│   │       ├── completion_service.py    # Streaming + merged-chat RAG path + leading-msg strip
+│   │       ├── merge_service.py         # Vector-fusion merge (zero message copying)
+│   │       ├── vector_service.py        # Pinecone: store, query, fuse_namespaces()
+│   │       ├── storage_service.py       # Local or Vercel Blob file storage
 │   │       └── encryption_service.py    # Fernet encrypt/decrypt for API keys
 ├── frontend/
-│   ├── package.json                     # React 18, Zustand, Lucide, Vite
-│   ├── index.html
-│   ├── vite.config.ts
-│   ├── tsconfig.json
 │   ├── src/
-│   │   ├── main.tsx                     # Entry point
 │   │   ├── api.ts                       # API layer with SSE streaming
-│   │   ├── store.ts                     # Zustand store (all state + actions)
-│   │   ├── types.ts                     # TypeScript interfaces
-│   │   ├── index.css                    # Full dark theme CSS (~1000 lines)
+│   │   ├── store.ts                     # Zustand store (all state + actions, handles warning chunks)
+│   │   ├── types.ts                     # TypeScript interfaces; LLM_PROVIDER_LABELS (no Pinecone)
+│   │   ├── index.css                    # Full dark theme CSS
 │   │   └── components/
 │   │       ├── App.tsx                  # Main layout
-│   │       ├── Sidebar.tsx              # Chat list + merge button
-│   │       ├── ChatArea.tsx             # Message display + streaming
-│   │       ├── InputArea.tsx            # Text input
-│   │       ├── MessageBubble.tsx        # Message render + reasoning toggle
-│   │       ├── MergeModal.tsx           # Merge UI with streaming progress
-│   │       └── SettingsModal.tsx        # API key management per provider
-│   └── dist/                            # Built frontend served by FastAPI
-└── start.sh                             # Startup script
+│   │       ├── Sidebar.tsx              # Chat list + merge button (uses LLM_PROVIDER_LABELS)
+│   │       ├── ChatArea.tsx             # Message display + RAG-powered badge for merged chats
+│   │       ├── InputArea.tsx            # Text input + file upload
+│   │       ├── MessageBubble.tsx        # Message render + attachment display
+│   │       ├── MergeModal.tsx           # Merge UI — green banner when RAG enabled; uses LLM_PROVIDER_LABELS
+│   │       └── SettingsModal.tsx        # API key management (all 4 providers including Pinecone)
+├── tests/
+│   └── playwright_full_test.py          # 9-test Playwright suite (9/9 passing)
+├── start.sh                             # Startup script
+├── vercel.json                          # Vercel deployment config
+└── api/index.py                         # Vercel Python entry point
 ```
 
-### Database Schema (SQLite)
-- **Chat**: id (UUID), title, provider, model, system_prompt, created_at, updated_at, messages (relationship)
-- **Message**: id (UUID), chat_id (FK), role (user/assistant/system), content, reasoning_trace (nullable), created_at
+### Database Schema
+- **Chat**: id (UUID), title, provider, model, system_prompt, `is_merged` (bool), created_at, updated_at
+- **Message**: id (UUID), chat_id (FK), role (user/assistant/system), content, created_at
+- **Attachment**: id (UUID), message_id (FK), file_name, file_type, file_size, storage_path, created_at
 - **APIKey**: id (UUID), provider (unique), encrypted_key, is_active, created_at
 - **MergeHistory**: id (UUID), source_chat_ids (JSON), merged_chat_id (FK), merge_model, created_at
 
 ### Key Implementation Details
 
-**Provider abstraction**: `BaseProvider` abstract class with `stream_completion()` returning `AsyncGenerator[StreamChunk, None]`. `StreamChunk` is a dataclass with `type` (content/reasoning/error/done/merge_complete) and `data` (string).
+**Vector-fusion merge** (`vector_service.fuse_namespaces()`):
+- Fetches all vectors from each source namespace
+- For each vector in source B: if cosine similarity with nearest neighbor in A ≥ 0.82, replace that neighbor with the normalized average; otherwise append as unique
+- Result is stored in the merged chat's Pinecone namespace
+- `numpy` used for cosine similarity (local, no API calls)
 
-**Streaming DB session fix**: Streaming endpoints create their OWN db sessions via `async with async_session() as db` inside the generator function. Using `Depends(get_db)` fails because FastAPI closes the dependency session before the async generator runs.
+**Merged-chat completions** (`completion_service._build_merged_chat_context()`):
+- Detects `chat.is_merged == True` → always uses RAG (not the message-count threshold)
+- Embeds user query → queries fused namespace (top_k=8) → injects as context block in system prompt
+- Recent messages in the merged chat (post-merge) are included as normal history
+- Leading non-user messages stripped before provider calls (Gemini/Anthropic require user-first conversations)
 
-**Reasoning trace capture**:
-- Anthropic: Extended thinking enabled for Sonnet 4 and Opus 4 via `thinking={"type": "enabled", "budget_tokens": 10000}` with `temperature=1` (required). Captures `thinking_delta` events.
-- OpenAI: o-series models (o1, o3, o4-mini) use `reasoning={"effort": "high", "summary": "auto"}`, `developer` role instead of `system`, `max_completion_tokens` instead of `max_tokens`.
-- Gemini: No reasoning trace support currently.
+**Provider abstraction**: `BaseProvider` abstract class with `stream_completion()` returning `AsyncGenerator[StreamChunk, None]`. `StreamChunk` has `type` (content/reasoning/error/done/warning/merge_complete) and `data`.
 
-**Completion context building** (`_build_message_history` in completion_service.py): When building the message history to send to a provider, reasoning traces from prior assistant messages are embedded in the content as `<reasoning_trace>...</reasoning_trace>` blocks. System messages (merge context markers) are converted to user messages with `[System context: ...]` prefix since not all providers handle system messages in the history.
+**Attachment handling**: Images supported natively by all three providers (OpenAI: base64 image_url blocks; Anthropic: base64 image blocks; Gemini: inline_data parts). Non-image files sent as text context.
 
-**Current merge algorithm**: Full-context merge — copies ALL messages from source chats chronologically, adds system-level context boundary markers ("--- Context from: {title} ---"), preserves reasoning traces on every copied message, generates a brief 2-4 sentence AI synthesis bridge at the end (NOT a summary/rewrite). Sets a system prompt on the merged chat explaining the merge.
+**`LLM_PROVIDER_LABELS` vs `PROVIDER_LABELS`**: `LLM_PROVIDER_LABELS` = {openai, anthropic, gemini}. `PROVIDER_LABELS` = {openai, anthropic, gemini, pinecone}. Chat creation and merge UI must use `LLM_PROVIDER_LABELS`; Settings modal uses `PROVIDER_LABELS`.
 
-**Google Gemini SDK**: Uses the NEW `google-genai` SDK (not the deprecated `google-generativeai`). Pattern: `client = genai.Client(api_key=...)`, `client.aio.models.generate_content_stream(model=..., contents=..., config=types.GenerateContentConfig(...))`.
+## Commands
 
-## Three Major Changes To Implement
+```bash
+# Backend
+cd backend && uv run uvicorn main:app --reload --port 8000
 
-### 1. File/Image Upload Support
+# Frontend
+cd frontend && npm run dev
 
-The app is currently text-only. Add support for:
-- **File upload endpoint** on the backend to accept and store attachments (images, PDFs, text files, code files)
-- **Database schema change**: New `Attachment` model linked to messages (file_name, file_type, file_size, storage_path or blob, created_at)
-- **Provider-level support**: Send images/files to all three providers:
-  - OpenAI: base64 image_url content blocks in messages
-  - Anthropic: base64 image content blocks
-  - Gemini: `types.Part.from_image()` or `types.Part.from_bytes()`
-- **Frontend UI**: Drag-and-drop zone, paste handler (Ctrl+V images), file picker button next to the text input, thumbnail previews for images, file chips for documents
-- **Merge must carry over attachments** when copying messages between chats
+# Import check
+cd backend && uv run python -c "from main import app; print('OK')"
 
-### 2. RAG Vector Store Architecture for Chat Merging
+# Playwright tests (requires both servers running)
+python3 tests/playwright_full_test.py
+```
 
-**Replace the current merge approach** with a RAG-based system. The new architecture:
+## Critical Invariants (Don't Break These)
 
-- **Each chat gets its own vector store** that's updated incrementally with every new message, file/attachment, model response, and reasoning trace
-- **Every piece of content gets embedded**: user messages, assistant responses, reasoning traces (when available), and file contents (extracted text from PDFs, images via OCR/description, etc.)
-- **Merging chats = merging their vector stores** into a new combined vector store for the merged chat
-- **When continuing a merged chat**, the system uses RAG retrieval from the merged vector store to pull the most relevant context from all source conversations, rather than stuffing the entire message history into the context window (which hits token limits for long conversations)
+1. **Streaming generators own their DB sessions** — never use `Depends(get_db)` inside a streaming generator
+2. **Merged chats have zero copied messages** — all context via RAG from fused Pinecone namespace
+3. **Strip leading non-user messages** before any provider API call (Gemini/Anthropic reject assistant-first history)
+4. **Pinecone ops gated on `vector_service.is_configured()`** — app works without Pinecone (falls back to simple union)
+5. **Anthropic extended thinking requires `temperature=1`**
+6. **OpenAI o-series**: no `temperature`, use `developer` role, use `max_completion_tokens`
+7. **Gemini SDK is `google-genai`** (not `google-generativeai`)
 
-**Vector store technology choice**: Since we're deploying to Vercel (serverless, stateless), we CANNOT use embedded/local vector stores like FAISS or local ChromaDB. Options:
-- **Pinecone** (serverless, managed, great Python SDK, free tier available)
-- **Upstash Vector** (serverless, deeply integrated with Vercel ecosystem, REST API)
-- **Chroma Cloud** (hosted ChromaDB service)
-- Use **namespaces or metadata filtering** to scope vectors per-chat, and merge by creating a new namespace that unions both source namespaces
+## Environment Variables
 
-**Embedding model**: Use the provider's own embedding API (OpenAI `text-embedding-3-small` is a good default) or a self-hosted sentence-transformers model.
-
-**FAISS `merge_from()`** is the simplest merge approach if we were local, but since we're going serverless, the merge operation becomes: create new collection/namespace, copy all vectors from source collections into it. With Pinecone this can be done by querying all vectors from source namespaces and upserting into the target.
-
-The RAG retrieval flow for completions becomes:
-1. User sends message
-2. Embed the user message
-3. Query the chat's vector store for top-K most relevant chunks
-4. Include retrieved context in the system prompt or as context messages
-5. Send to the LLM provider as before
-6. Embed and store the assistant response + reasoning trace
-
-### 3. Convert to Vercel-Deployable Web App
-
-**Vercel deployment constraints**:
-- Serverless functions are STATELESS — no persistent filesystem
-- SQLite won't work — need a cloud database (Vercel Postgres, Supabase, PlanetScale, Neon)
-- Python serverless functions supported via `@vercel/python` runtime
-- Can do zero-config FastAPI deployment (Vercel auto-detects FastAPI)
-- OR traditional `vercel.json` with `api/index.py` entry point
-- Frontend can be built as static and served from CDN
-- Environment variables set in Vercel dashboard (API keys, DB connection strings)
-- Max bundle size 250MB for Python functions
-- SSE streaming works on Vercel with `StreamingResponse`
-
-**Required changes**:
-- **Database migration**: SQLite → Vercel Postgres (or Supabase/Neon PostgreSQL). Update SQLAlchemy connection string, switch from `aiosqlite` to `asyncpg` driver
-- **File storage**: Local filesystem → cloud storage (Vercel Blob, S3, Cloudflare R2) for uploaded files
-- **Project restructure** for Vercel:
-  ```
-  chat-merge-app/
-  ├── api/
-  │   └── index.py          # FastAPI app entry point
-  ├── app/                   # Backend application code
-  ├── frontend/              # React frontend (or move to root)
-  ├── vercel.json            # Deployment config
-  ├── requirements.txt       # Python deps
-  └── package.json           # Frontend build
-  ```
-- **Environment variables**: All API keys, DB URLs, vector store credentials via env vars (not .env files)
-- **CORS**: Update from `*` to actual domain
-- **Auth**: Add basic auth (at minimum API key-based, or NextAuth/Clerk for proper user auth) since it's now a public web app
-- **Landing page**: Create a front page describing the motivation — how people want to merge contexts across their various AI chats but no current interface supports it
-
-### 4. GitHub Repo + AGENTS.md
-
-- Initialize as a git repo
-- Create a proper README.md with project description, architecture, setup instructions, deployment guide
-- Create an AGENTS.md file following Vercel's AGENTS.md conventions (fetch https://vercel.com/docs/ai-agents or the vercel-labs/agent-skills repo for format reference)
-- Push to GitHub (user's GitHub: can use `gh` CLI with GITHUB_TOKEN from ~/.zshrc)
-- Connect to Vercel for deployment
-
-## Bugs Fixed in Previous Sessions (Don't Re-Introduce)
-
-1. **start.sh path bug**: Must use `SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"` for reliable paths
-2. **greenlet missing**: SQLAlchemy async requires `greenlet>=3.0.0` in requirements.txt
-3. **google-generativeai deprecated**: Must use `google-genai>=1.0.0` with `google.genai` SDK
-4. **SSE streaming session lifetime**: Streaming generators MUST create own DB sessions, NOT use `Depends(get_db)`
-5. **EventSourceResponse issues**: Use `StreamingResponse` with manual `data: {json}\n\n` formatting
-6. **Anthropic extended thinking**: Requires `temperature=1` when `thinking` parameter is set
-7. **OpenAI o-series**: No temperature param, use `developer` role not `system`, use `max_completion_tokens`
-
-## Development Environment
-
-- **Python**: Use conda `work_env` environment via miniforge3, packages managed with `uv`
-- **Node**: npm v11.6.2, Node v25.2.1
-- **API keys**: In `~/.zshrc` as env vars (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, GITHUB_TOKEN)
-- **Git user**: Quilee Simeon (qsimeon@mit.edu)
-
-## Suggested Implementation Order
-
-1. **Init git repo**, create .gitignore, initial commit of current working state
-2. **Add file/image upload** (backend endpoint, Attachment model, provider support, frontend UI)
-3. **Add vector store integration** (pick Pinecone or Upstash, create per-chat stores, embed on every message, RAG retrieval in completions)
-4. **Rewrite merge to use vector store merging** instead of copying all messages
-5. **Migrate database** from SQLite to PostgreSQL (Neon or Vercel Postgres)
-6. **Migrate file storage** to cloud (Vercel Blob or S3)
-7. **Restructure for Vercel deployment** (api/index.py, vercel.json, env vars)
-8. **Add landing page** with project motivation
-9. **Add basic auth** (at minimum)
-10. **Create README.md and AGENTS.md**
-11. **Push to GitHub and deploy to Vercel**
-
-## Current State
-
-The app runs locally. To start: `cd ~/chat-merge-app && ./start.sh` (installs deps, builds frontend, starts uvicorn on port 8000). All three providers work, streaming works, merge works, reasoning traces are captured and displayed with a toggleable UI. The dark-themed UI is clean and functional. The main gaps are: no file uploads, no RAG/vector store (merge is full-message-copy), no cloud deployment readiness.
+| Variable | Purpose |
+|----------|---------|
+| `OPENAI_API_KEY` | OpenAI chat + embeddings |
+| `ANTHROPIC_API_KEY` | Anthropic chat |
+| `GOOGLE_API_KEY` | Gemini chat |
+| `PINECONE_API_KEY` | Vector store (required for smart fusion) |
+| `DATABASE_URL` | PostgreSQL URL (optional, defaults to SQLite) |
+| `BLOB_READ_WRITE_TOKEN` | Vercel Blob for file storage (optional) |
+| `ALLOWED_ORIGINS` | CORS (optional, defaults to `*` for dev) |

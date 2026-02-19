@@ -9,10 +9,9 @@ People constantly have great conversations across different AI systems — deep 
 ## Features
 
 - **Multi-provider chat**: OpenAI (GPT-4o, o4-mini), Anthropic (Claude Sonnet/Opus/Haiku), Google Gemini — through one interface
-- **Conversation merging**: Combine 2+ chats into a new chat preserving ALL messages, reasoning traces, and file attachments
-- **RAG-powered context**: Merged chats use Pinecone vector retrieval to serve the most relevant context without hitting token limits
-- **Reasoning traces**: Captures Claude's extended thinking and o-series reasoning summaries — toggle to see the model's full thought process
-- **File & image uploads**: Drag-and-drop, paste, or pick files. Images sent natively to provider vision APIs; documents embedded as text
+- **Smart conversation merging**: Combine 2+ chats via vector-fusion — source namespaces are nearest-neighbor fused (not just concatenated), producing a compressed semantic representation of both conversations
+- **RAG-powered merged chats**: Every query in a merged chat retrieves the most relevant context from the fused vector store via Pinecone — no context-window explosions, scales to conversations of any length
+- **File & image uploads**: Drag-and-drop, paste, or pick files. Images sent natively to provider vision APIs
 - **Streaming responses**: Real-time SSE streaming for all providers
 - **Encrypted API keys**: Keys stored encrypted with Fernet, never logged
 
@@ -33,10 +32,10 @@ Open [http://localhost:8000](http://localhost:8000), click **Settings**, add you
 
 **Manual setup:**
 ```bash
-# Backend
+# Backend (uses uv for dependency management)
 cd backend
-pip install -r requirements.txt
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+uv sync
+uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 # Frontend (separate terminal)
 cd frontend
@@ -66,7 +65,7 @@ DATABASE_URL=postgresql://user:pass@host/dbname
 BLOB_READ_WRITE_TOKEN=vercel_blob_...
 ```
 
-The app works without Pinecone (RAG disabled), without cloud DB (uses SQLite), and without cloud storage (uses local filesystem). Each feature is opt-in.
+Pinecone is required for merged-chat RAG (the core feature). Without it, merged chats fall back to simple vector union. The cloud DB and blob storage are optional (SQLite and local filesystem are the defaults).
 
 ---
 
@@ -120,20 +119,20 @@ chat-merge-app/
 
 ### How Merging Works
 
-1. User selects 2+ chats to merge
-2. **Message copy**: All messages from all source chats copied chronologically into the merged chat (context boundary markers added)
-3. **Vector merge**: Source namespaces in Pinecone merged into a new namespace for the merged chat
-4. **AI synthesis**: A brief bridging message generated to transition into the unified thread
-5. **RAG retrieval**: When the user continues chatting in the merged thread, the completion service embeds the query and retrieves the top-K most relevant messages from the merged vector store — serving focused context instead of dumping everything into the prompt
+1. User selects 2+ chats and a provider/model for the merge
+2. **Vector fusion**: Source Pinecone namespaces are fused using nearest-neighbor averaging — semantically overlapping vectors from both chats are averaged into single embeddings; unique vectors are kept. Result size is between `max(|A|, |B|)` and `|A|+|B|`, not the full union
+3. **Empty merged chat**: The new merged chat has zero copied messages — the fused vector namespace is its entire memory
+4. **AI intro**: A brief assistant message is generated summarising the topics covered across the merged conversations
+5. **Always-RAG completions**: Every user message in a merged chat embeds the query, retrieves top-K relevant chunks from the fused namespace, and injects them as context — no context window explosion regardless of source chat length
 
 ### Provider Details
 
-| Provider | Streaming | Reasoning | Images | Notes |
-|----------|-----------|-----------|--------|-------|
-| OpenAI GPT-4o | ✅ | ❌ | ✅ | Standard chat models |
-| OpenAI o4-mini/o3 | ✅ | ✅ | ❌ | No `temperature`, uses `developer` role |
-| Anthropic Claude | ✅ | ✅ | ✅ | Extended thinking on Sonnet/Opus, requires `temperature=1` |
-| Google Gemini | ✅ | ❌ | ✅ | google-genai SDK (NOT google-generativeai) |
+| Provider | Streaming | Images | Notes |
+|----------|-----------|--------|-------|
+| OpenAI GPT-4o | ✅ | ✅ | Standard chat models |
+| OpenAI o4-mini/o3 | ✅ | ❌ | No `temperature`, uses `developer` role |
+| Anthropic Claude | ✅ | ✅ | Sonnet/Opus/Haiku via `claude-*-4-*` model IDs |
+| Google Gemini | ✅ | ✅ | google-genai SDK (NOT google-generativeai) |
 
 ---
 
@@ -211,13 +210,13 @@ chat-merge-app/
 → Check file type (images, PDFs, text files supported). Max 10MB per file.
 
 **RAG not working after merge**
-→ Set `PINECONE_API_KEY`. The merge modal shows a yellow warning if RAG is not configured. Without it, completions fall back to the most recent N messages.
+→ Set `PINECONE_API_KEY`. Without it, merge falls back to simple vector union (no nearest-neighbor fusion). The merge modal shows a green "Smart fusion enabled" banner when Pinecone is configured.
+
+**Merged chat not responding**
+→ Ensure you chose a real LLM provider (OpenAI/Anthropic/Gemini) as the merge model — Pinecone (RAG) is not a chat provider.
 
 **Database errors on first run**
 → Tables are created automatically on startup. If you see schema errors, delete `chat_app.db` (SQLite) or drop and recreate tables.
-
-**Anthropic extended thinking errors**
-→ Extended thinking requires Sonnet 4 or Opus 4 models. Earlier models don't support it.
 
 ---
 

@@ -82,5 +82,8 @@ coverage/
 .pytest_cache/
 htmlcov/
 
+# Uploaded files (user content, can be large)
+backend/uploads/
+
 # Build artifacts
 *.whl

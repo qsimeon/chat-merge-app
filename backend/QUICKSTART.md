@@ -7,12 +7,8 @@ Get the Chat Merge App backend running in 5 minutes.
 ```bash
 cd backend
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
+# Install dependencies (uses uv — no manual venv needed)
+uv sync
 ```
 
 ## 2. Configure API Keys
@@ -33,7 +29,7 @@ You'll need at least one API key. Get them from:
 ## 3. Start Server
 
 ```bash
-python main.py
+uv run uvicorn main:app --reload --port 8000
 ```
 
 Server runs at `http://localhost:8000`
@@ -193,18 +189,18 @@ Make sure you've:
 
 ### Connection refused
 
-Make sure the server is running: `python main.py`
+Make sure the server is running: `uv run uvicorn main:app --reload --port 8000`
 
 ### Import errors
 
-Make sure all dependencies are installed: `pip install -r requirements.txt`
+Make sure all dependencies are installed: `uv sync`
 
 ### Database locked error
 
 Delete `chat_app.db` and restart (you'll lose data):
 ```bash
 rm chat_app.db
-python main.py
+uv run uvicorn main:app --reload --port 8000
 ```
 
 ## Next Steps

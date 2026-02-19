@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useStore } from '../store';
-import { PROVIDER_LABELS, PROVIDER_MODELS } from '../types';
+import { LLM_PROVIDER_LABELS, PROVIDER_MODELS } from '../types';
 import { Plus, Settings, Trash2, GitMerge } from 'lucide-react';
 
 function Sidebar() {
@@ -81,7 +81,7 @@ function Sidebar() {
                     setNewChatModel(PROVIDER_MODELS[e.target.value][0]);
                   }}
                 >
-                  {Object.entries(PROVIDER_LABELS).map(([key, label]) => (
+                  {Object.entries(LLM_PROVIDER_LABELS).map(([key, label]) => (
                     <option key={key} value={key}>
                       {label}
                     </option>

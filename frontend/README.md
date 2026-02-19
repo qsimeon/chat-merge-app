@@ -5,10 +5,12 @@ A modern React + TypeScript frontend for a multi-provider AI chat application wi
 ## Features
 
 - **Multi-Provider Support**: Seamlessly switch between OpenAI, Anthropic, and Google Gemini
-- **Intelligent Merge**: Combine multiple conversations using AI to create cohesive merged chats
-- **Real-time Streaming**: See responses stream in real-time with reasoning traces
-- **API Key Management**: Securely manage API keys for different providers
-- **Modern UI**: Clean, dark-themed interface inspired by ChatGPT/Claude
+- **Vector-Fusion Merge**: Combine conversations via smart Pinecone namespace fusion — not message copying
+- **RAG-Powered Merged Chats**: Every query in a merged chat retrieves relevant context from the fused vector store
+- **File & Image Uploads**: Drag-and-drop or paste images; sent natively to provider vision APIs
+- **Real-time Streaming**: See responses stream in real-time via SSE
+- **API Key Management**: Securely manage keys for all providers including Pinecone
+- **Modern UI**: Clean, dark-themed interface
 - **State Management**: Zustand for efficient state management
 - **TypeScript**: Full type safety across the application
 
@@ -94,7 +96,8 @@ proxy: {
 
 ### Merge Modal
 - Select multiple chats to merge
-- Choose provider and model for merge operation
+- Choose provider and model for merge operation (LLM providers only — Pinecone excluded)
+- Green "Smart fusion enabled" banner when Pinecone is configured
 - Real-time progress display
 - Auto-navigate to merged chat on completion
 

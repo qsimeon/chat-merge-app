@@ -259,6 +259,12 @@ async def stream_chat_completion(
                 attachments=[{"file_name": a["file_name"]} for a in current_attachment_data] or None,
             ))
 
+        # Gemini and Anthropic require conversations to start with a user turn.
+        # The merged chat intro message is "assistant" role — strip any leading
+        # non-user messages so providers that enforce this don't reject the request.
+        while message_history and message_history[0].get("role") != "user":
+            message_history.pop(0)
+
         current_msg_dict = {"role": "user", "content": user_content}
         if current_attachment_data:
             current_msg_dict["attachments"] = current_attachment_data

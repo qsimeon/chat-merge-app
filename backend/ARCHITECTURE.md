@@ -2,7 +2,7 @@
 
 ## System Overview
 
-The Chat Merge App backend is a modular, async-first FastAPI application that orchestrates interactions with multiple AI providers and intelligently merges conversations.
+ChatMerge is a modular, async-first FastAPI backend that orchestrates multi-provider AI chat, vector-fusion conversation merging, RAG-powered context retrieval, and file attachment handling.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -14,27 +14,31 @@ The Chat Merge App backend is a modular, async-first FastAPI application that or
         │                  │                  │
         ▼                  ▼                  ▼
     ┌─────────┐        ┌─────────┐       ┌──────────┐
-    │  Routes │        │ Services│       │ Providers│
+    │  Routes │        │Services │       │Providers │
     │         │        │         │       │          │
-    │ /chats  │        │ Chat    │       │ OpenAI   │
-    │ /msgs   │        │ Merge   │       │ Anthropic│
-    │ /keys   │        │ Encrypt │       │ Gemini   │
-    │ /merge  │        │         │       │          │
-    └────┬────┘        └────┬────┘       └────┬─────┘
+    │ /chats  │        │Completion│      │ OpenAI   │
+    │ /msgs   │        │Merge    │       │Anthropic │
+    │ /attach │        │Vector   │       │ Gemini   │
+    │ /keys   │        │Storage  │       │          │
+    │ /merge  │        │Encrypt  │       └────┬─────┘
+    └────┬────┘        └────┬────┘            │
          │                  │                  │
          └──────────────────┼──────────────────┘
                             │
-                ┌───────────┴───────────┐
-                │                       │
-                ▼                       ▼
-            ┌─────────────┐       ┌──────────┐
-            │   Database  │       │Encryption│
-            │             │       │ (Fernet) │
-            │ Chat        │       └──────────┘
-            │ Message     │
-            │ APIKey      │
-            │ MergeHist   │
-            └─────────────┘
+              ┌─────────────┴──────────────┐
+              │                            │
+              ▼                            ▼
+      ┌──────────────┐             ┌──────────────┐
+      │   Database   │             │   Pinecone   │
+      │   (SQLite /  │             │  Vector Store│
+      │  PostgreSQL) │             │  (per-chat   │
+      │              │             │  namespaces) │
+      │ Chat         │             └──────────────┘
+      │ Message      │
+      │ Attachment   │
+      │ APIKey       │
+      │ MergeHistory │
+      └──────────────┘
 ```
 
 ## Module Breakdown
@@ -44,414 +48,182 @@ The Chat Merge App backend is a modular, async-first FastAPI application that or
 Creates and configures the FastAPI app:
 - Initializes CORS middleware
 - Registers all routers
-- Mounts static files (for frontend)
-- Sets up startup event to create database tables
-- Provides health check endpoint
-
-**Key functions:**
-- `startup_event()`: Async initialization
-- `root()`: Serves frontend index.html
-- `health_check()`: Returns {"status": "ok"}
+- Mounts static files (for frontend dist)
+- Runs startup: creates DB tables, runs `is_merged` column migration
+- Health check endpoint at `/health` (includes `rag_enabled` flag)
 
 ### Database Layer: app/database.py
 
-Manages SQLAlchemy async configuration:
-- `SQLAlchemy AsyncEngine` with aiosqlite
+- `SQLAlchemy AsyncEngine` with `aiosqlite` (dev) or `asyncpg` (prod)
 - `async_sessionmaker` factory for sessions
 - `Base` declarative base for ORM models
-- `create_tables()` async function to initialize schema
+- `create_tables()` + `migrate_add_is_merged()` on startup
 
-**Pattern:**
+**Session pattern:**
 ```python
 async with async_session() as session:
-    # Use session
     await session.commit()
 ```
 
 ### Models: app/models.py
 
-Four SQLAlchemy ORM models:
-
 #### Chat
-- Represents a conversation session
-- Links to multiple Messages
-- Stores provider, model, system prompt
-- Timestamps for tracking
+- `id`, `title`, `provider`, `model`, `system_prompt`
+- `is_merged` (Boolean, default False) — drives always-RAG path in completion_service
+- `created_at`, `updated_at`
 
 #### Message
-- Individual message in a chat
-- Tracks role (user/assistant/system)
-- Stores reasoning trace for extended thinking
-- Foreign key to Chat (with cascade delete)
+- `id`, `chat_id` (FK cascade), `role`, `content`, `created_at`
+- One-to-many with `Attachment` (`lazy="selectin"`)
+
+#### Attachment
+- `id`, `message_id` (FK cascade), `file_name`, `file_type`, `file_size`
+- `storage_path` — local path or Vercel Blob URL
 
 #### APIKey
-- Encrypted provider API keys
-- Active flag for enable/disable
-- Unique per provider
+- `id`, `provider` (unique), `encrypted_key`, `is_active`
 
 #### MergeHistory
-- Tracks merge operations
-- Stores source chat IDs and merged chat ID
-- Records which model was used for merge
-
-### Schemas: app/schemas.py
-
-Pydantic models for validation and API documentation:
-
-**Request schemas:**
-- `ChatCreate`: Title, provider, model, system_prompt
-- `CompletionRequest`: Content, temperature, max_tokens
-- `APIKeyCreate`: Provider, api_key
-- `MergeRequest`: chat_ids, merge_provider, merge_model
-
-**Response schemas:**
-- `MessageResponse`: Full message with metadata
-- `ChatResponse`: Chat with all messages
-- `ChatListItem`: Compact chat info for lists
-- `APIKeyResponse`: Safe API key info (no secret)
-- `ModelsResponse`: Available models per provider
-
-### Providers: app/providers/
-
-Abstract provider pattern with three implementations.
-
-#### BaseProvider (base.py)
-Abstract class defining provider interface:
-```python
-async def stream_completion(
-    messages: List[dict],
-    model: str,
-    system_prompt: Optional[str] = None,
-    temperature: float = 0.7,
-    max_tokens: Optional[int] = None,
-) -> AsyncGenerator[StreamChunk, None]
-```
-
-Yields `StreamChunk` objects with type and data.
-
-#### OpenAIProvider (openai_provider.py)
-- Uses `AsyncOpenAI` client
-- Models: gpt-4o, gpt-4o-mini, gpt-4-turbo, gpt-3.5-turbo, o1, o1-mini
-- Adds system_prompt as first message
-- Streams with `stream=True`
-
-#### AnthropicProvider (anthropic_provider.py)
-- Uses `AsyncAnthropic` client
-- Models: claude-sonnet-4-20250514, claude-haiku-4-20250414, claude-opus-4-20250514
-- System prompt passed via `system` parameter
-- Distinguishes thinking blocks (reasoning) from text blocks
-- Yields both content and reasoning chunks
-
-#### GeminiProvider (gemini_provider.py)
-- Uses `genai.GenerativeModel` (synchronous API wrapped async)
-- Models: gemini-2.0-flash, gemini-1.5-pro, gemini-1.5-flash
-- Converts standard message format to Gemini format
-- Role mapping: "assistant" → "model"
-- Content structure: `{"parts": [{"text": "..."}]}`
-
-#### Factory (factory.py)
-```python
-def create_provider(provider_name: str, api_key: str) -> BaseProvider
-def get_all_models() -> Dict[str, List[str]]
-```
-
-Centralizes provider instantiation and model enumeration.
+- `id`, `source_chat_ids` (JSON), `merged_chat_id` (FK), `merge_model`
 
 ### Services: app/services/
 
-Business logic layer with async operations.
+#### completion_service.py — Streaming + RAG
 
-#### chat_service.py
-CRUD operations on Chat and Message entities:
-- `create_chat(db, chat_data)`: Insert new chat
-- `get_chats(db)`: List all chats with counts
-- `get_chat(db, chat_id)`: Fetch one chat with messages
-- `update_chat(db, chat_id, updates)`: Modify title/system_prompt
-- `delete_chat(db, chat_id)`: Remove chat and cascade messages
-- `get_messages(db, chat_id)`: Get messages for a chat
-- `create_message(db, chat_id, role, content, reasoning)`: Add message
+**`stream_chat_completion()`**:
+1. Load chat; detect `chat.is_merged`
+2. For **merged chats**: call `_build_merged_chat_context()` — embeds user query, queries fused Pinecone namespace, injects top-K context block into system prompt
+3. For **regular chats**: standard message history build; RAG fallback if history > threshold
+4. Strip any leading non-user messages (Gemini/Anthropic require user-first conversations)
+5. Stream from provider, accumulate, save assistant message + trigger vector storage
 
-All functions are async and properly handle database sessions.
+#### merge_service.py — Vector-Fusion Merge
 
-#### completion_service.py
-Streaming chat completions with database persistence:
+**`merge_chats()`** — zero message copying:
+1. Load source chats + sample messages for AI intro generation
+2. Create empty merged chat with `is_merged=True`
+3. Call `vector_service.fuse_namespaces()` — the core fusion
+4. Generate AI intro message ("I've merged [A] and [B]...")
+5. Save intro as first (only) assistant message
+6. Record `MergeHistory`
+7. Yield `merge_complete` event
 
-**`stream_chat_completion(db, chat_id, user_content, ...)`**
-1. Load chat and verify it exists
-2. Retrieve all previous messages
-3. Append user message to history
-4. Save user message to database
-5. Get decrypted API key for chat's provider
-6. Create provider instance via factory
-7. Stream completion from provider
-8. Accumulate content and reasoning
-9. On completion, save assistant message to database
-10. Yield chunks to caller
+#### vector_service.py — Pinecone RAG
 
-Handles errors gracefully with error chunks.
+**`store_message_vector()`**: Embeds message content with `text-embedding-3-small`, upserts to chat's Pinecone namespace. Fire-and-forget via `asyncio.create_task()`.
 
-#### merge_service.py
-Intelligent conversation merging (the core feature).
-
-**Key components:**
-
-`MERGE_SYSTEM_PROMPT`: Detailed instructions for synthesis algorithm
-
-`_format_conversation()`: Format chat + messages into structured text:
+**`fuse_namespaces(source_ids, target_id, ...)`**: The innovation —
 ```
-## Conversation: "Title"
-Provider: X / Model: Y
+working_set = all vectors from source A
+for each vector w in source B:
+    nn = nearest neighbor in working_set (cosine similarity via numpy)
+    if cosine(w, nn) >= 0.82:
+        replace nn with normalize((nn + w) / 2)   # averaged embedding
+    else:
+        append w                                   # unique concept, keep both
+upsert working_set → target namespace
+```
+Result size: between `max(|A|,|B|)` and `|A|+|B|`. Semantically redundant content is compressed; unique concepts are preserved.
 
-USER: message
-ASSISTANT: response
-[REASONING]: thinking
+**`query_relevant_context()`**: Embeds query, fetches top-K matches from namespace, returns content strings.
+
+#### storage_service.py — File Storage
+
+Abstracts local filesystem vs Vercel Blob:
+- Local: saves to `backend/uploads/{uuid}`
+- Vercel Blob: uploads via REST API using `BLOB_READ_WRITE_TOKEN`
+- `get_file(path)` returns bytes regardless of backend
+
+#### encryption_service.py — API Key Security
+
+Fernet symmetric encryption. Key stored in `.encryption_key` (gitignored).
+- `encrypt_key(plain)` → encrypted string stored in DB
+- `decrypt_key(encrypted)` → plaintext for provider calls
+
+### Providers: app/providers/
+
+#### BaseProvider (base.py)
+```python
+async def stream_completion(
+    messages: List[dict],      # {role, content, attachments?}
+    model: str,
+    system_prompt: Optional[str],
+    temperature: float,
+    max_tokens: Optional[int],
+) -> AsyncGenerator[StreamChunk, None]
 ```
 
-`_parse_merged_response()`: Parse merge output using strict format:
-```
-[USER]: content
-[ASSISTANT]: content
-[REASONING]: optional
-```
+`StreamChunk.type`: `content | error | done | warning | merge_complete`
 
-**`merge_chats(db, chat_ids, merge_provider, merge_model)`**:
-1. Load all specified chats
-2. Format each as structured text
-3. Combine into one merge prompt
-4. Stream from merge model
-5. Parse output into (role, content, reasoning) tuples
-6. Create new Chat with merged title
-7. Save all parsed messages
-8. Create MergeHistory record
-9. Yield merge_complete event with merged chat ID
+#### OpenAIProvider
+- Images: base64 `image_url` content blocks
+- o-series: no `temperature`, `developer` role, `max_completion_tokens`
 
-#### encryption_service.py
-Symmetric encryption using Fernet (industry standard):
+#### AnthropicProvider
+- Images: base64 `image` content blocks
+- Extended thinking: `temperature=1` required when enabled
 
-- `_get_or_create_encryption_key()`: Loads from or generates `.encryption_key`
-- `encrypt_key(plain_key)`: Returns base64-encoded ciphertext
-- `decrypt_key(encrypted_key)`: Returns decrypted plaintext
-
-**Security note:** The `.encryption_key` file must be:
-- Not committed to version control
-- Protected with proper file permissions (chmod 600)
-- Backed up securely if persistence is needed
-- Never transmitted over network
+#### GeminiProvider
+- Uses `google-genai` SDK (`genai.Client`), NOT `google-generativeai`
+- Images: `types.Part.from_bytes()`
+- Role mapping: `"assistant"` → `"model"`
 
 ### Routes: app/routes/
 
-FastAPI routers organized by resource.
+| File | Endpoints |
+|------|-----------|
+| `chats.py` | `GET/POST /api/chats`, `GET/PATCH/DELETE /api/chats/{id}` |
+| `messages.py` | `GET /api/chats/{id}/messages`, `POST /api/chats/{id}/completions` (SSE) |
+| `attachments.py` | `POST /api/attachments`, `GET /api/attachments/{id}`, `DELETE /api/attachments/{id}` |
+| `api_keys.py` | `GET/POST /api/api-keys`, `DELETE /api/api-keys/{id}` |
+| `merge.py` | `POST /api/merge` (SSE), `GET /api/models` |
 
-#### chats.py
-REST endpoints for chat management:
-- `POST /api/chats/`: Create
-- `GET /api/chats/`: List
-- `GET /api/chats/{id}`: Read
-- `PATCH /api/chats/{id}`: Update
-- `DELETE /api/chats/{id}`: Delete
-
-All endpoints:
-- Get session via dependency injection
-- Return proper HTTP status codes
-- Log errors
-- Return appropriate response schemas
-
-#### messages.py
-Message retrieval and streaming completions:
-- `GET /api/chats/{id}/messages`: List messages
-- `POST /api/chats/{id}/completions`: Stream completion (SSE)
-
-**SSE Implementation:**
-- Uses `sse_starlette.EventSourceResponse`
-- Wraps `stream_chat_completion()` generator
-- Each event is JSON: `{"type": "...", "data": "..."}`
-- Client can handle streaming with EventSource API
-
-#### api_keys.py
-API key lifecycle management:
-- `POST /api/api-keys/`: Store (with encryption)
-- `GET /api/api-keys/`: List (safe, no secrets)
-- `DELETE /api/api-keys/{id}`: Remove
-- `POST /api/api-keys/validate`: Test key validity
-
-**Key features:**
-- Update-or-insert logic (idempotent)
-- Never returns decrypted keys
-- Validates with provider before storing (optional)
-
-#### merge.py
-Merge operations and model discovery:
-- `POST /api/merge`: Merge chats (SSE streaming)
-- `GET /api/models`: List all available models
-
-**Merge response:**
-- Streams events during processing
-- Final event type is `merge_complete` with merged chat ID
-- Client awaits this event to get result
-
-## Data Flow Examples
-
-### Chat Completion Flow
+## Data Flow: Vector-Fusion Merge
 
 ```
-1. User POST /api/chats/{id}/completions
-   └─ Request: {"content": "Hello"}
-
-2. Route receives request
-   ├─ Get chat from database
-   ├─ Call completion_service.stream_chat_completion()
-   │
-   └─ completion_service:
-      ├─ Load all previous messages
-      ├─ Save user message
-      ├─ Get decrypted API key
-      ├─ Create provider
-      │
-      └─ provider.stream_completion():
-         ├─ Call API
-         ├─ Yield StreamChunk objects
-         │
-      ├─ Accumulate response
-      ├─ Save assistant message
-      └─ Yield chunks to client
-
-3. Route wraps in EventSourceResponse
-   └─ Each chunk becomes SSE event
-
-4. Client receives events:
-   {"type": "content", "data": "Hello..."}
-   {"type": "content", "data": " there!"}
-   {"type": "done", "data": ""}
+POST /api/merge {chat_ids: [A, B], merge_provider, merge_model}
+  │
+  ├─ merge_service.merge_chats()
+  │   ├─ Create empty merged Chat (is_merged=True)
+  │   ├─ vector_service.fuse_namespaces(A, B → merged_chat_id)
+  │   │   ├─ fetch all vectors from namespace A
+  │   │   ├─ fetch all vectors from namespace B
+  │   │   ├─ nearest-neighbor fusion loop (numpy cosine)
+  │   │   └─ upsert fused set → merged_chat namespace
+  │   ├─ Generate AI intro via provider.stream_completion()
+  │   ├─ Save intro as message
+  │   └─ yield merge_complete {merged_chat_id}
+  │
+Client navigates to merged chat
 ```
 
-### Merge Flow
+## Data Flow: Merged Chat Completion
 
 ```
-1. User POST /api/merge
-   └─ Request: {chat_ids: [...], merge_provider: "...", merge_model: "..."}
-
-2. Route calls merge_service.merge_chats()
-
-3. merge_service:
-   ├─ Load all chats and their messages
-   ├─ Format as text
-   ├─ Build merge prompt with system instructions
-   ├─ Create merge provider
-   │
-   ├─ provider.stream_completion(merge_prompt):
-   │  ├─ API call
-   │  ├─ Stream response
-   │
-   ├─ Accumulate full response
-   ├─ Parse [USER]/[ASSISTANT] format
-   ├─ Create new Chat
-   ├─ Save parsed messages
-   ├─ Create MergeHistory record
-   └─ Yield merge_complete event
-
-4. Client receives final event:
-   {"type": "merge_complete", "data": "merged-chat-id"}
+POST /api/chats/{merged_id}/completions {content: "Who am I?"}
+  │
+  ├─ completion_service (detects is_merged=True)
+  │   ├─ _build_merged_chat_context()
+  │   │   ├─ embed "Who am I?" → vector
+  │   │   ├─ query merged namespace top-8
+  │   │   └─ build context block string
+  │   ├─ system_prompt += context block
+  │   ├─ strip leading non-user messages
+  │   ├─ provider.stream_completion(messages, system_prompt)
+  │   └─ yield chunks → SSE to client
 ```
 
-## Error Handling Strategy
+## Security
 
-All async functions implement layered error handling:
+1. **API Keys**: Encrypted at rest via Fernet; never logged or returned in API responses
+2. **CORS**: Permissive in dev (`*`); set `ALLOWED_ORIGINS` in production
+3. **SQL Injection**: Protected by SQLAlchemy ORM parameterized queries
+4. **Validation**: Pydantic schemas validate all request inputs
+5. **File uploads**: Stored with UUID filenames; served only via authenticated endpoint
 
-1. **Provider Layer**: Yields error chunks if API call fails
-2. **Service Layer**: Catches provider errors, logs, yields error chunks
-3. **Route Layer**: Catches service errors, returns HTTP error response
-4. **Top Level**: CORS and unhandled exceptions return 500
+## Performance
 
-Error response format:
-```json
-{
-  "detail": "Human-readable error message"
-}
-```
-
-## Async/Await Patterns
-
-All database operations use async context managers:
-```python
-async with async_session() as db:
-    result = await db.execute(select(...))
-    rows = result.scalars().all()
-    await db.commit()
-```
-
-All provider operations are async generators:
-```python
-async for chunk in provider.stream_completion(...):
-    # Handle chunk
-```
-
-All routes use `async def` with async service calls.
-
-## Performance Considerations
-
-1. **Streaming**: Large responses don't require buffering - streamed directly to client
-2. **Async I/O**: Non-blocking database and API calls via asyncio
-3. **Connection Pooling**: SQLAlchemy maintains connection pool
-4. **Message Ordering**: Database ORDERED BY created_at ensures consistency
-5. **Lazy Loading**: Messages loaded only when needed via relationships
-
-## Security Considerations
-
-1. **API Keys**: Encrypted at rest using Fernet
-2. **CORS**: Currently permissive (for development)
-3. **SQL Injection**: Protected by SQLAlchemy ORM
-4. **Validation**: Pydantic schemas validate all inputs
-5. **No Logging of Secrets**: API keys never logged
-6. **Encryption Key**: Must be protected in production
-
-## Future Extensions
-
-1. **Authentication**: Add user authentication and isolation
-2. **Caching**: Redis cache for frequently accessed chats
-3. **Vector Search**: Embed messages for semantic search
-4. **Rate Limiting**: Per-user API quotas
-5. **Webhooks**: Async notifications on completion
-6. **Batch Operations**: Process multiple chats in parallel
-7. **Analytics**: Track usage and model performance
-8. **Custom Providers**: Plugin architecture for new AI services
-
-## Database Schema
-
-```sql
-CREATE TABLE chats (
-    id TEXT PRIMARY KEY,
-    title TEXT,
-    provider TEXT NOT NULL,
-    model TEXT NOT NULL,
-    system_prompt TEXT,
-    created_at DATETIME,
-    updated_at DATETIME
-);
-
-CREATE TABLE messages (
-    id TEXT PRIMARY KEY,
-    chat_id TEXT FOREIGN KEY,
-    role TEXT NOT NULL,
-    content TEXT NOT NULL,
-    reasoning_trace TEXT,
-    created_at DATETIME
-);
-
-CREATE TABLE api_keys (
-    id TEXT PRIMARY KEY,
-    provider TEXT UNIQUE NOT NULL,
-    encrypted_key TEXT NOT NULL,
-    is_active BOOLEAN,
-    created_at DATETIME
-);
-
-CREATE TABLE merge_history (
-    id TEXT PRIMARY KEY,
-    source_chat_ids JSON,
-    merged_chat_id TEXT FOREIGN KEY,
-    merge_model TEXT NOT NULL,
-    created_at DATETIME
-);
-```
-
-All id columns use UUID strings for global uniqueness without database coordination.
+- **Streaming**: Responses chunked directly to client via SSE; no buffering
+- **Async I/O**: All DB and provider calls are non-blocking
+- **Vector ops**: Fire-and-forget via `asyncio.create_task()` — never blocks message save
+- **RAG**: Only top-K chunks injected; scales to arbitrarily long source conversations

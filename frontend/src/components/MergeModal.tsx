@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useStore } from '../store';
 import { LLM_PROVIDER_LABELS, PROVIDER_MODELS } from '../types';
-import { X, Database, AlertCircle } from 'lucide-react';
+import { X, Database } from 'lucide-react';
 
 function MergeModal() {
   const {
@@ -49,20 +49,13 @@ function MergeModal() {
         <div className="modal__body">
           {!isMerging ? (
             <>
-              {/* RAG Status Banner */}
-              <div className={`merge-modal__rag-status ${ragEnabled ? 'merge-modal__rag-status--enabled' : 'merge-modal__rag-status--disabled'}`}>
-                {ragEnabled ? (
-                  <>
-                    <Database size={14} />
-                    <span>Smart fusion enabled — vector stores will be intelligently merged, not just concatenated</span>
-                  </>
-                ) : (
-                  <>
-                    <AlertCircle size={14} />
-                    <span>Pinecone key required — add it in Settings to enable vector-fusion merge</span>
-                  </>
-                )}
-              </div>
+              {/* RAG Status Banner — only show when confirmed enabled */}
+              {ragEnabled && (
+                <div className="merge-modal__rag-status merge-modal__rag-status--enabled">
+                  <Database size={14} />
+                  <span>Smart fusion enabled — vector stores will be intelligently merged, not just concatenated</span>
+                </div>
+              )}
 
               <div className="merge-modal__chat-list">
                 <div style={{ marginBottom: '12px', fontSize: '14px', color: 'var(--text-secondary)' }}>
