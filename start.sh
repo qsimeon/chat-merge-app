@@ -8,28 +8,28 @@ echo "  ChatMerge - Multi-Provider AI Chat App"
 echo "========================================="
 echo ""
 
-# Resolve Python: prefer conda work_env, fall back to python3
-CONDA_PYTHON="$HOME/miniforge3/envs/work_env/bin/python"
-if [ -f "$CONDA_PYTHON" ]; then
-  PYTHON="$CONDA_PYTHON"
-  PIP="$HOME/miniforge3/envs/work_env/bin/pip"
-  UVICORN="$HOME/miniforge3/envs/work_env/bin/uvicorn"
+# Resolve uv (preferred) or fall back to pip
+if command -v uv &>/dev/null; then
+  USE_UV=true
+  echo "Using uv for Python dependency management."
 elif command -v python3 &>/dev/null; then
-  PYTHON="python3"
-  PIP="pip3"
-  UVICORN="python3 -m uvicorn"
+  USE_UV=false
+  echo "uv not found — falling back to pip."
 else
-  echo "Error: No Python found. Install miniforge3 or python3."
+  echo "Error: No Python found. Install uv (https://github.com/astral-sh/uv) or python3."
   exit 1
 fi
 
-echo "Using Python: $PYTHON ($($PYTHON --version 2>&1))"
 echo ""
 
 # Install backend dependencies
 echo "[1/4] Installing backend dependencies..."
 cd "$SCRIPT_DIR/backend"
-$PIP install -r requirements.txt -q 2>&1 | tail -1
+if [ "$USE_UV" = true ]; then
+  uv sync -q
+else
+  pip3 install -r requirements.txt -q 2>&1 | tail -1
+fi
 echo "  Backend dependencies installed."
 
 # Install frontend dependencies
@@ -58,4 +58,8 @@ echo "  3. Create a new chat and start messaging!"
 echo "  4. Create multiple chats and use 'Merge Chats' to combine them"
 echo ""
 
-$UVICORN main:app --host 0.0.0.0 --port 8000
+if [ "$USE_UV" = true ]; then
+  uv run uvicorn main:app --host 0.0.0.0 --port 8000
+else
+  python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
+fi
