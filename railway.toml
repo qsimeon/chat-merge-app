@@ -1,0 +1,15 @@
+# Railway deployment configuration for ChatMerge
+# https://docs.railway.app/reference/config-as-code
+
+[build]
+builder = "nixpacks"
+# Build frontend first, then install Python deps
+buildCommand = "cd frontend && npm ci && npm run build && cd ../backend && uv sync"
+
+[deploy]
+# Railway injects $PORT automatically
+startCommand = "cd backend && uv run uvicorn main:app --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3

@@ -136,43 +136,52 @@ chat-merge-app/
 
 ---
 
-## Deployment (Vercel)
+## Deployment
 
-### Prerequisites
-- Vercel account
-- Neon or Vercel Postgres database (free tier works)
-- Pinecone account for RAG (optional but recommended)
-- Vercel Blob for file storage (optional)
+### Recommended: Railway
 
-### Steps
+Railway runs the app as a **persistent process** — ideal for FastAPI with SSE streaming. No timeout issues, no stateless cold-start problems.
 
-1. **Push to GitHub**
-   ```bash
-   gh repo create chatmerge --public
-   git push -u origin main
+**Why not Vercel?** Vercel runs Python as serverless functions (stateless, 10-60s max duration). SSE streaming for long AI responses will timeout, and the local SQLite/uploads filesystem vanishes between requests.
+
+#### Steps
+
+1. **Push to GitHub** (already done if you cloned this repo)
+
+2. **Create a Railway account** at [railway.app](https://railway.app) → New Project → Deploy from GitHub repo → select this repo. Railway reads `railway.toml` automatically.
+
+3. **Add a PostgreSQL database**: In your Railway project → Add Service → Database → PostgreSQL. Railway injects `DATABASE_URL` into your app — it auto-switches from SQLite to PostgreSQL.
+
+4. **Set environment variables** in Railway project → Variables:
    ```
-
-2. **Import to Vercel**
-   - Go to vercel.com → New Project → Import your repo
-
-3. **Set environment variables** in Vercel dashboard:
+   ALLOWED_ORIGINS=https://your-app.up.railway.app
    ```
-   OPENAI_API_KEY=sk-...
-   ANTHROPIC_API_KEY=sk-ant-...
-   GOOGLE_API_KEY=...
-   DATABASE_URL=postgresql://...   (from Neon/Vercel Postgres)
-   PINECONE_API_KEY=...            (from pinecone.io)
-   BLOB_READ_WRITE_TOKEN=...       (from Vercel Blob)
-   ALLOWED_ORIGINS=https://your-app.vercel.app
-   ```
+   LLM and Pinecone API keys are optional at the server level — users set their own keys through the Settings UI.
 
-4. **Deploy** — Vercel auto-detects FastAPI and the static frontend
+5. **Get your URL** — Railway assigns `https://your-app.up.railway.app`. Set that as `ALLOWED_ORIGINS` above.
 
-### Database Setup (Neon)
+6. **File uploads** — Railway provides persistent volumes. Enable one under your service → Settings → Volumes, mounted at `/app/backend/uploads`. Without it, uploads persist only until the next redeploy.
 
-1. Create a Neon project at neon.tech
-2. Copy the connection string (PostgreSQL format)
-3. Add as `DATABASE_URL` in Vercel — the app handles the rest (table creation on startup)
+#### What the `railway.toml` does
+
+```toml
+[build]
+buildCommand = "cd frontend && npm ci && npm run build && cd ../backend && uv sync"
+# ↑ Builds React frontend → frontend/dist/  then installs Python deps
+
+[deploy]
+startCommand = "cd backend && uv run uvicorn main:app --host 0.0.0.0 --port $PORT"
+# ↑ $PORT is injected by Railway; FastAPI serves both API and frontend dist
+healthcheckPath = "/health"
+# ↑ Railway pings this — if it stops returning 200, Railway restarts the service
+```
+
+### Alternative: Vercel (partially set up)
+
+`vercel.json` and `api/index.py` exist if you want to try Vercel. Key caveats:
+- Set `BLOB_READ_WRITE_TOKEN` (Vercel Blob) for file storage — local uploads won't persist
+- Set `DATABASE_URL` pointing to Neon or Supabase — SQLite won't work
+- SSE responses may timeout on long AI completions (10s hobby, 60s Pro limit)
 
 ---
 
