@@ -207,12 +207,12 @@ export const useStore = create<AppState>((set, get) => ({
     } catch (error) {
       set({ error: error instanceof Error ? error.message : 'Failed to send message' });
     } finally {
-      set({
-        isStreaming: false,
-        streamingContent: '',
-      });
-      // Refresh chats list to update message counts
+      const pendingError = get().error;
+      set({ isStreaming: false, streamingContent: '' });
+      // Refresh chats list to update message counts — restore error afterward
+      // since loadChats() clears it via set({ error: null })
       await get().loadChats();
+      if (pendingError) set({ error: pendingError });
     }
   },
 
