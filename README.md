@@ -237,4 +237,4 @@ healthcheckPath = "/health"
 - **File Storage**: Local filesystem / Vercel Blob
 - **Frontend**: React 18, TypeScript, Vite, Zustand, Lucide icons
 - **Streaming**: Server-Sent Events (SSE) with manual formatting
-- **Deployment**: Vercel (Python + static)
+- **Deployment**: Railway (recommended) / Vercel (fallback)

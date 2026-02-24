@@ -181,6 +181,7 @@ myAction: () => {
 
 ## Deployment Notes
 
+- **Railway is the recommended deployment target** — `railway.toml` exists at repo root; supports persistent Python processes (no SSE timeout), GitHub push-to-deploy, and a PostgreSQL plugin
 - Vercel Python serverless is stateless — no persistent filesystem (use Vercel Blob)
 - SQLite works locally but not on Vercel — use PostgreSQL via `DATABASE_URL`
 - `asyncio.create_task()` works in FastAPI async context but tasks may not complete if the function returns before them — this is acceptable for vector storage

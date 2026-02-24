@@ -1,5 +1,5 @@
 # Project Status — ChatMerge
-> Last reviewed: 2026-02-19
+> Last reviewed: 2026-02-24
 > Reviewed by: Claude (deep scan)
 
 ## Project Overview
@@ -19,8 +19,9 @@ ChatMerge is a multi-provider AI chat application (OpenAI, Anthropic, Gemini) wh
 | Provider dropdown cleanup (no Pinecone in LLM lists) | ✅ | Uses LLM_PROVIDER_LABELS |
 | Merged chat reply on Gemini/Anthropic | ✅ | Leading non-user message strip |
 | Playwright test suite | ✅ | 9/9 passing |
-| Documentation | ✅ | README, AGENTS.md, ARCHITECTURE.md, COWORK_CODE_HANDOFF.md updated |
-| Deployment | ⏳ | vercel.json + api/index.py exist but not fully validated |
+| Documentation | ✅ | README, AGENTS.md, ARCHITECTURE.md, QUICKSTART.md updated; redundant backend/README.md + frontend/README.md + LATEST_PLAN.md deleted |
+| Railway deployment config | ✅ | `railway.toml` added at repo root; `start.sh` updated to use `uv` |
+| Deployment (live) | ⏳ | Awaiting human: create Railway account, add PostgreSQL plugin, set ALLOWED_ORIGINS |
 | Vector store abstraction (swappable backend) | ⏳ | Pinecone-specific; modular VectorStore ABC would unlock alternatives |
 | Auth / multi-user | ❓ | Currently single-user, no auth — intentional for demo |
 
@@ -38,16 +39,12 @@ The core product is feature-complete for a v1 demo:
 ## What's Left
 
 ### Claude Can Handle
-- **Delete `LATEST_PLAN.md`** — stale planning artifact (the plan was fully implemented)
-- **Fix `start.sh`** — still uses `pip install -r requirements.txt` instead of `uv sync`
 - **Vector store abstraction** — extract a `VectorStore` ABC from `vector_service.py`; add `PineconeVectorStore` implementation; makes swapping to Qdrant/Weaviate/Chroma trivial
-- **Railway deployment** — `railway.toml` config, Procfile, ENV var docs; simpler fit than Vercel for persistent FastAPI + SSE
 
 ### Human Action Needed
-- **Choose a deployment platform** (see Deployment section below) — requires account creation, billing, and pasting env vars
+- **Deploy to Railway** — `railway.toml` is ready; requires creating a Railway account, adding the PostgreSQL plugin, and setting the `ALLOWED_ORIGINS` env var to the deployed frontend URL
 - **Create a Pinecone index** named `chatmerge` (dimension 1536, cosine metric, us-east-1) before deploying — currently auto-created on first use but may timeout on cold start
-- **Provide a PostgreSQL DATABASE_URL** if deploying (SQLite doesn't work on serverless/ephemeral deployments)
-- **Vercel Blob token or S3 credentials** for file storage in production (local `uploads/` won't persist on stateless deployments)
+- **File storage in production** — local `uploads/` won't persist on Railway unless a persistent volume is attached; alternatively use Vercel Blob or S3
 
 ### Needs Clarification
 - **Auth**: Is no-auth intentional long-term, or do you want basic auth before sharing publicly?
@@ -55,15 +52,8 @@ The core product is feature-complete for a v1 demo:
 
 ## Cleanup Recommendations
 
-### Safe to Delete
-- `LATEST_PLAN.md` — implementation planning doc; everything in it is done
-
-### Should Update
-- `start.sh` — uses `pip install` not `uv sync`; also doesn't try `uv` at all
-
 ### Code to Clean Up
 - `vector_service.py:merge_vector_namespaces()` — still used as fallback in merge_service; keep it, but it's now an implementation detail (not the primary path)
-- `backend/README.md` — describes pre-RAG architecture (setup-focused); now redundant with QUICKSTART.md + ARCHITECTURE.md
 
 ## Deployment Recommendation
 
@@ -82,6 +72,5 @@ See the in-chat discussion for full analysis. Short version:
 
 ## Recommendations for Next Session
 
-1. **Deploy to Railway**: minimal config changes, gets the demo live and shareable
+1. **Deploy to Railway**: `railway.toml` is ready — create account, add PostgreSQL plugin, set `ALLOWED_ORIGINS`, push
 2. **Add VectorStore abstraction**: 2-3 hour refactor that makes the codebase clean and future-proof against vector DB vendor changes
-3. **Delete LATEST_PLAN.md + fix start.sh**: 5-minute cleanup before the next feature sprint

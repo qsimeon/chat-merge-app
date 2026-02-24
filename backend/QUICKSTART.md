@@ -212,6 +212,6 @@ uv run uvicorn main:app --reload --port 8000
 
 ## Need Help?
 
-- Check logs: Look at console output from `python main.py`
+- Check logs: Look at console output from `uv run uvicorn main:app --reload --port 8000`
 - API docs: Visit `http://localhost:8000/docs`
 - OpenAPI schema: `http://localhost:8000/openapi.json`
