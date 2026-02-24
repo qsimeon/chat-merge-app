@@ -1,0 +1,5 @@
+# Tell Nixpacks to install Node.js in addition to Python.
+# Needed because package.json lives in frontend/ (a subdirectory),
+# so Nixpacks won't auto-detect Node from the repo root.
+[phases.setup]
+nixPkgs = ["nodejs_20"]
