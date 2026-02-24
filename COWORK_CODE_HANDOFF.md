@@ -19,7 +19,7 @@ The project is feature-complete for its v1 demo. All three providers work, mergi
 - **Frontend**: React 18 + TypeScript + Vite + Zustand (state management) + Lucide icons
 - **Vector Store**: Pinecone serverless, `text-embedding-3-small` embeddings, one namespace per chat
 - **Streaming**: Server-Sent Events (SSE) via `StreamingResponse` with manual `data: {json}\n\n` formatting
-- **File Storage**: Local `backend/uploads/` (dev) or Vercel Blob (prod)
+- **File Storage**: Local `backend/uploads/` (dev) or Railway persistent volume (prod)
 - **No auth** — single-user local app
 
 ### Directory Structure
@@ -49,7 +49,7 @@ chat-merge-app/
 │   │       ├── completion_service.py    # Streaming + merged-chat RAG path + leading-msg strip
 │   │       ├── merge_service.py         # Vector-fusion merge (zero message copying)
 │   │       ├── vector_service.py        # Pinecone: store, query, fuse_namespaces()
-│   │       ├── storage_service.py       # Local or Vercel Blob file storage
+│   │       ├── storage_service.py       # Local file storage (Railway persistent volume in prod)
 │   │       └── encryption_service.py    # Fernet encrypt/decrypt for API keys
 ├── frontend/
 │   ├── src/
@@ -68,8 +68,7 @@ chat-merge-app/
 ├── tests/
 │   └── playwright_full_test.py          # 9-test Playwright suite (9/9 passing)
 ├── start.sh                             # Startup script
-├── vercel.json                          # Vercel deployment config
-└── api/index.py                         # Vercel Python entry point
+└── railway.toml                         # Railway deployment config
 ```
 
 ### Database Schema
@@ -134,5 +133,4 @@ python3 tests/playwright_full_test.py
 | `GOOGLE_API_KEY` | Gemini chat |
 | `PINECONE_API_KEY` | Vector store (required for smart fusion) |
 | `DATABASE_URL` | PostgreSQL URL (optional, defaults to SQLite) |
-| `BLOB_READ_WRITE_TOKEN` | Vercel Blob for file storage (optional) |
 | `ALLOWED_ORIGINS` | CORS (optional, defaults to `*` for dev) |

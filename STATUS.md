@@ -44,31 +44,24 @@ The core product is feature-complete for a v1 demo:
 ### Human Action Needed
 - **Deploy to Railway** — `railway.toml` is ready; requires creating a Railway account, adding the PostgreSQL plugin, and setting the `ALLOWED_ORIGINS` env var to the deployed frontend URL
 - **Create a Pinecone index** named `chatmerge` (dimension 1536, cosine metric, us-east-1) before deploying — currently auto-created on first use but may timeout on cold start
-- **File storage in production** — local `uploads/` won't persist on Railway unless a persistent volume is attached; alternatively use Vercel Blob or S3
+- **File storage in production** — local `uploads/` won't persist on Railway unless a persistent volume is mounted at `/app/backend/uploads`
 
 ### Needs Clarification
 - **Auth**: Is no-auth intentional long-term, or do you want basic auth before sharing publicly?
-- **File uploads in prod**: Keep local uploads (works on Railway/Render with a persistent volume), or move to cloud storage (required for Vercel/serverless)?
+- **File uploads in prod**: Use Railway persistent volume (mount at `/app/backend/uploads`) or accept that uploads reset on redeploy for a demo
 
 ## Cleanup Recommendations
 
 ### Code to Clean Up
 - `vector_service.py:merge_vector_namespaces()` — still used as fallback in merge_service; keep it, but it's now an implementation detail (not the primary path)
 
-## Deployment Recommendation
+## Deployment
 
-See the in-chat discussion for full analysis. Short version:
-
-**Recommended: Railway**
-- Supports persistent Python processes → SSE streaming works without timeout risk
+**Railway** — `railway.toml` configured:
+- Persistent Python process → SSE streaming works without timeout risk
 - GitHub push-to-deploy
-- PostgreSQL plugin (add-on, free tier available)
+- PostgreSQL plugin (auto-injects `DATABASE_URL`)
 - One service hosts both backend + frontend dist
-- Change: `DATABASE_URL` env var → auto-switches SQLite → PostgreSQL
-
-**Vercel (already partially set up)** is viable but has a **60s SSE timeout** on Pro (10s on Hobby). Long AI responses WILL timeout. It's also stateless — needs Blob storage for file uploads.
-
-**Render** is another solid Railway alternative with very similar tradeoffs.
 
 ## Recommendations for Next Session
 

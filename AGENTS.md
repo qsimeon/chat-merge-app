@@ -97,7 +97,7 @@ MergeHistory: id, source_chat_ids (JSON), merged_chat_id, merge_model
 
 - `Chat.is_merged` — set `True` for merged chats; drives always-RAG context path in completion_service
 - `Message.reasoning_trace` column was removed from the active schema
-- `Attachment.storage_path` points to `backend/uploads/{uuid}` locally, or a Vercel Blob URL in production
+- `Attachment.storage_path` points to `backend/uploads/{uuid}` (local or Railway persistent volume)
 
 Never store API keys in plaintext — always use `encryption_service.encrypt_key()` before saving.
 
@@ -110,7 +110,6 @@ Never store API keys in plaintext — always use `encryption_service.encrypt_key
 | `GOOGLE_API_KEY` | One of these required | Google Gemini API key |
 | `PINECONE_API_KEY` | Optional | Enables RAG vector retrieval |
 | `DATABASE_URL` | Optional | PostgreSQL URL (defaults to SQLite) |
-| `BLOB_READ_WRITE_TOKEN` | Optional | Vercel Blob for file storage |
 | `ALLOWED_ORIGINS` | Optional | CORS origins (defaults to `*` for dev) |
 
 ## Common Patterns
@@ -181,9 +180,8 @@ myAction: () => {
 
 ## Deployment Notes
 
-- **Railway is the recommended deployment target** — `railway.toml` exists at repo root; supports persistent Python processes (no SSE timeout), GitHub push-to-deploy, and a PostgreSQL plugin
-- Vercel Python serverless is stateless — no persistent filesystem (use Vercel Blob)
-- SQLite works locally but not on Vercel — use PostgreSQL via `DATABASE_URL`
-- `asyncio.create_task()` works in FastAPI async context but tasks may not complete if the function returns before them — this is acceptable for vector storage
-- SSE streaming works on Vercel Pro (max 60s), may timeout on hobby tier for long completions
+- **Railway is the deployment target** — `railway.toml` at repo root; persistent Python process (no SSE timeout), GitHub push-to-deploy, PostgreSQL plugin
+- SQLite is the default locally; Railway injects `DATABASE_URL` → app auto-switches to PostgreSQL
+- File uploads persist only if a Railway volume is mounted at `/app/backend/uploads`; without it uploads vanish on redeploy
+- `asyncio.create_task()` works in FastAPI async context but tasks may not complete if the function returns before them — acceptable for vector storage
 - Pinecone index name is hardcoded as `"chatmerge"` in `vector_service.py` — create this index before deploying

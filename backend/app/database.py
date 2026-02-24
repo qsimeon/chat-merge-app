@@ -8,10 +8,10 @@ logger = logging.getLogger(__name__)
 
 # Determine database URL from environment
 # - Local development: SQLite via aiosqlite
-# - Production (Vercel): PostgreSQL via asyncpg (set DATABASE_URL env var)
+# - Production (Railway): PostgreSQL via asyncpg (Railway injects DATABASE_URL automatically)
 _raw_url = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./chat_app.db")
 
-# Vercel Postgres provides postgres:// URLs — upgrade to asyncpg dialect
+# Railway / Heroku provide postgres:// URLs — upgrade to asyncpg dialect
 if _raw_url.startswith("postgres://"):
     DATABASE_URL = _raw_url.replace("postgres://", "postgresql+asyncpg://", 1)
 elif _raw_url.startswith("postgresql://"):

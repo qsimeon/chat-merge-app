@@ -61,11 +61,9 @@ PINECONE_API_KEY=...
 # Optional: cloud database (defaults to local SQLite)
 DATABASE_URL=postgresql://user:pass@host/dbname
 
-# Optional: cloud file storage (defaults to local uploads/)
-BLOB_READ_WRITE_TOKEN=vercel_blob_...
 ```
 
-Pinecone is required for merged-chat RAG (the core feature). Without it, merged chats fall back to simple vector union. The cloud DB and blob storage are optional (SQLite and local filesystem are the defaults).
+Pinecone is required for merged-chat RAG (the core feature). Without it, merged chats fall back to simple vector union. The cloud DB is optional (SQLite is the default).
 
 ---
 
@@ -73,8 +71,6 @@ Pinecone is required for merged-chat RAG (the core feature). Without it, merged 
 
 ```
 chat-merge-app/
-├── api/
-│   └── index.py              # Vercel Python entry point
 ├── backend/
 │   ├── main.py               # FastAPI app, CORS, static serving, startup
 │   ├── requirements.txt
@@ -98,7 +94,7 @@ chat-merge-app/
 │           ├── completion_service.py # Streaming + RAG context building
 │           ├── merge_service.py      # Full-context merge + vector merging
 │           ├── vector_service.py     # Pinecone RAG (opt-in)
-│           ├── storage_service.py    # Local or Vercel Blob storage
+│           ├── storage_service.py    # Local file storage (Railway volume in prod)
 │           └── encryption_service.py # Fernet key encryption
 ├── frontend/
 │   └── src/
@@ -113,8 +109,7 @@ chat-merge-app/
 │           ├── MessageBubble.tsx     # Message + attachment display
 │           ├── MergeModal.tsx        # Merge UI with RAG status
 │           └── SettingsModal.tsx     # API key management
-├── vercel.json               # Vercel deployment config
-└── requirements.txt          # Root-level Python deps for Vercel
+└── railway.toml              # Railway deployment config
 ```
 
 ### How Merging Works
@@ -141,8 +136,6 @@ chat-merge-app/
 ### Recommended: Railway
 
 Railway runs the app as a **persistent process** — ideal for FastAPI with SSE streaming. No timeout issues, no stateless cold-start problems.
-
-**Why not Vercel?** Vercel runs Python as serverless functions (stateless, 10-60s max duration). SSE streaming for long AI responses will timeout, and the local SQLite/uploads filesystem vanishes between requests.
 
 #### Steps
 
@@ -175,13 +168,6 @@ startCommand = "cd backend && uv run uvicorn main:app --host 0.0.0.0 --port $POR
 healthcheckPath = "/health"
 # ↑ Railway pings this — if it stops returning 200, Railway restarts the service
 ```
-
-### Alternative: Vercel (partially set up)
-
-`vercel.json` and `api/index.py` exist if you want to try Vercel. Key caveats:
-- Set `BLOB_READ_WRITE_TOKEN` (Vercel Blob) for file storage — local uploads won't persist
-- Set `DATABASE_URL` pointing to Neon or Supabase — SQLite won't work
-- SSE responses may timeout on long AI completions (10s hobby, 60s Pro limit)
 
 ---
 
@@ -234,7 +220,7 @@ healthcheckPath = "/health"
 - **Backend**: Python 3.11, FastAPI, SQLAlchemy 2.0 async, Fernet encryption
 - **Database**: SQLite (local) / PostgreSQL via asyncpg (production)
 - **Vector Store**: Pinecone serverless with OpenAI text-embedding-3-small
-- **File Storage**: Local filesystem / Vercel Blob
+- **File Storage**: Local filesystem (Railway persistent volume in production)
 - **Frontend**: React 18, TypeScript, Vite, Zustand, Lucide icons
 - **Streaming**: Server-Sent Events (SSE) with manual formatting
-- **Deployment**: Railway (recommended) / Vercel (fallback)
+- **Deployment**: Railway

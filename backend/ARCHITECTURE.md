@@ -78,7 +78,7 @@ async with async_session() as session:
 
 #### Attachment
 - `id`, `message_id` (FK cascade), `file_name`, `file_type`, `file_size`
-- `storage_path` — local path or Vercel Blob URL
+- `storage_path` — local path (or Railway volume path in production)
 
 #### APIKey
 - `id`, `provider` (unique), `encrypted_key`, `is_active`
@@ -129,10 +129,11 @@ Result size: between `max(|A|,|B|)` and `|A|+|B|`. Semantically redundant conten
 
 #### storage_service.py — File Storage
 
-Abstracts local filesystem vs Vercel Blob:
-- Local: saves to `backend/uploads/{uuid}`
-- Vercel Blob: uploads via REST API using `BLOB_READ_WRITE_TOKEN`
-- `get_file(path)` returns bytes regardless of backend
+Saves files to `backend/uploads/{uuid}` on the local filesystem.
+On Railway, mount a persistent volume at `/app/backend/uploads` so files survive redeployments.
+- `save_file()` → returns `(storage_path, public_url)`
+- `get_file(path)` → returns bytes or None
+- `delete_file(path)` → removes file
 
 #### encryption_service.py — API Key Security
 
