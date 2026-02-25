@@ -4,66 +4,82 @@
 
 ## Project Overview
 
-ChatMerge is a multi-provider AI chat application (OpenAI, Anthropic, Gemini) whose core innovation is **vector-fusion conversation merging**: when two chats are merged, their Pinecone vector namespaces are intelligently fused using nearest-neighbor averaging. The merged chat has zero copied messages — context comes entirely from RAG retrieval against the fused vector store. Demo app, users supply their own API keys.
+ChatMerge is a multi-provider AI chat app (OpenAI, Anthropic, Gemini) whose core innovation is **vector-fusion conversation merging**: merged chats fuse their Pinecone vector namespaces via nearest-neighbor averaging, and all context in the merged chat is delivered via RAG — no message copying, no context-window blowup. Users supply their own API keys. The app is live at [chat-merge-app-production.up.railway.app](https://chat-merge-app-production.up.railway.app).
 
 ## Progress Summary
 
 | Area | Status | Notes |
 |------|--------|-------|
-| Multi-provider chat (OpenAI/Anthropic/Gemini) | ✅ | All 3 streaming correctly |
+| Multi-provider chat (OpenAI / Anthropic / Gemini) | ✅ | All 3 providers stream correctly |
 | File & image uploads | ✅ | Drag-drop/paste; images sent to provider vision APIs |
-| Vector-fusion merge | ✅ | fuse_namespaces() with numpy cosine NN + averaging |
-| Merged-chat RAG context | ✅ | is_merged flag, always-RAG path in completion_service |
+| Vector-fusion merge | ✅ | `fuse_namespaces()` nearest-neighbor + averaging |
+| Merged-chat RAG context | ✅ | `is_merged` flag, always-RAG path in completion_service |
 | Encrypted API key storage | ✅ | Fernet encryption |
-| Attachment persistence in chat history | ✅ | Fixed in latest session |
-| Provider dropdown cleanup (no Pinecone in LLM lists) | ✅ | Uses LLM_PROVIDER_LABELS |
-| Merged chat reply on Gemini/Anthropic | ✅ | Leading non-user message strip |
-| Playwright test suite | ✅ | 9/9 passing |
-| Documentation | ✅ | README, AGENTS.md, ARCHITECTURE.md, QUICKSTART.md updated; redundant backend/README.md + frontend/README.md + LATEST_PLAN.md deleted |
-| Railway deployment config | ✅ | `railway.toml` added at repo root; `start.sh` updated to use `uv` |
-| Deployment (live) | ⏳ | Awaiting human: create Railway account, add PostgreSQL plugin, set ALLOWED_ORIGINS |
-| Vector store abstraction (swappable backend) | ⏳ | Pinecone-specific; modular VectorStore ABC would unlock alternatives |
-| Auth / multi-user | ❓ | Currently single-user, no auth — intentional for demo |
+| Error message display | ✅ | Fixed: error no longer silently wiped after sendMessage |
+| Onboarding CTA (landing page) | ✅ | "Get started in 2 steps" guide for new users |
+| Railway deployment | ✅ | Live — Dockerfile builder, PostgreSQL plugin wired |
+| Railway auto-deploy | 👤 | GitHub App permissions issue — manual fix needed |
+| Playwright test suite (local) | ✅ | 9/9 passing |
+| Documentation | ✅ | All Vercel refs removed; Railway is sole deploy target |
+| File uploads in production | 👤 | Uploads reset on redeploy until persistent volume is mounted |
+| Auth / multi-user | ❓ | Intentionally absent for v1 demo |
 
 ## What's Complete
 
-The core product is feature-complete for a v1 demo:
+The core product is **feature-complete for v1**:
 - All three LLM providers work with streaming SSE
-- File/image uploads work, attachments persist across navigation
-- The vector-fusion merge algorithm is implemented and tested
-- Merged chats use RAG exclusively (no context window bombs)
-- The dark-themed UI is clean and functional
-- 9/9 Playwright tests pass with zero console errors
-- All docs reflect the current architecture
+- File/image uploads with vision API support
+- Vector-fusion merge algorithm implemented and tested
+- Merged chats use RAG exclusively (zero context-window blowup)
+- Clean dark-themed UI with onboarding guide for new users
+- Full Playwright test suite (9/9 local)
+- Deployed to Railway with PostgreSQL; HTTPS works correctly
 
 ## What's Left
 
-### Claude Can Handle
-- **Vector store abstraction** — extract a `VectorStore` ABC from `vector_service.py`; add `PineconeVectorStore` implementation; makes swapping to Qdrant/Weaviate/Chroma trivial
-
 ### Human Action Needed
-- **Deploy to Railway** — `railway.toml` is ready; requires creating a Railway account, adding the PostgreSQL plugin, and setting the `ALLOWED_ORIGINS` env var to the deployed frontend URL
-- **Create a Pinecone index** named `chatmerge` (dimension 1536, cosine metric, us-east-1) before deploying — currently auto-created on first use but may timeout on cold start
-- **File storage in production** — local `uploads/` won't persist on Railway unless a persistent volume is mounted at `/app/backend/uploads`
+- **Fix Railway auto-deploy** — GitHub App permissions broke during setup. Fix:
+  1. github.com → Settings → Applications → Railway → Configure
+  2. Add `qsimeon/chat-merge-app` to the allowed repositories list
+  3. Back in Railway → your service → Settings → Source → reconnect
+- **Persistent file uploads** — Mount a Railway volume at `/app/backend/uploads` (service → Settings → Volumes). Without it, uploaded files vanish on each redeploy. For a no-uploads demo this is fine; for real use it matters.
+- **Verify production CTA** — Just pushed the "Get started in 2 steps" landing-page update. Trigger a manual Railway redeploy (until auto-deploy is fixed), then confirm it renders correctly.
+- **Pinecone in production** — The Pinecone index must be manually created or exist before a user adds a Pinecone API key. The app creates it lazily on first use, which may timeout on cold start. Consider pre-creating index `chatmerge` (dimension 1536, cosine, us-east-1) or documenting this for users.
 
-### Needs Clarification
-- **Auth**: Is no-auth intentional long-term, or do you want basic auth before sharing publicly?
-- **File uploads in prod**: Use Railway persistent volume (mount at `/app/backend/uploads`) or accept that uploads reset on redeploy for a demo
+### Claude Can Handle
+- **`@app.on_event("startup")` deprecation** (`backend/main.py:63`) — FastAPI 0.100+ prefers the `lifespan` context manager. Not broken, but flagged as deprecated in FastAPI logs.
+- **`pyproject.toml` readme stale ref** (`backend/pyproject.toml:5`) — `readme = "README.md"` points to `backend/README.md` which was deleted. Low impact (just a metadata warning) but easy to fix by removing that line.
+- **`backend/requirements.txt` redundancy** — Duplicates `pyproject.toml`. Only kept for `start.sh`'s pip fallback path. Could be removed if `start.sh` is simplified to require uv (which is already the default).
+- **VectorStore abstraction** — Extract a `VectorStore` ABC from `vector_service.py`; add `PineconeVectorStore` implementation. Makes swapping to Qdrant/Weaviate/Chroma trivial.
 
 ## Cleanup Recommendations
 
-### Code to Clean Up
-- `vector_service.py:merge_vector_namespaces()` — still used as fallback in merge_service; keep it, but it's now an implementation detail (not the primary path)
+### Safe to Delete (with confirmation)
+- `backend/requirements.txt` — Exact duplicate of `pyproject.toml` deps. `start.sh` uses it as a fallback only if uv isn't present; since uv ships in the Dockerfile and is standard for this project, this file is maintenance overhead. Delete if `start.sh`'s pip fallback branch is also removed.
 
-## Deployment
+### Should Update
+- `backend/pyproject.toml:5` — `readme = "README.md"` → remove this line (backend/README.md no longer exists)
+- `backend/main.py:63` — `@app.on_event("startup")` → migrate to `lifespan` context manager to silence FastAPI deprecation warnings
 
-**Railway** — `railway.toml` configured:
-- Persistent Python process → SSE streaming works without timeout risk
-- GitHub push-to-deploy
-- PostgreSQL plugin (auto-injects `DATABASE_URL`)
-- One service hosts both backend + frontend dist
+### Not a Problem (verified)
+- `.aqe/` files — gitignored, not tracked
+- `backend/chat_app.db`, `.encryption_key` — gitignored, not tracked
+- `frontend/dist/` — gitignored, built by Dockerfile
+- `backend/__pycache__/` — gitignored, not tracked
+
+## Deployment Reference
+
+**Live URL**: `https://chat-merge-app-production.up.railway.app`
+
+**Stack**: Dockerfile builder → Python 3.11-slim + Node 20 → builds React dist → uv sync → uvicorn with `--proxy-headers`
+
+**Required env vars on Railway**:
+- `DATABASE_URL` — auto-injected by Railway PostgreSQL plugin
+- `ALLOWED_ORIGINS` — set to `https://chat-merge-app-production.up.railway.app`
+- `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `PINECONE_API_KEY` — user-supplied at runtime via Settings modal (stored encrypted in DB), OR set as Railway env vars for a pre-configured demo
 
 ## Recommendations for Next Session
 
-1. **Deploy to Railway**: `railway.toml` is ready — create account, add PostgreSQL plugin, set `ALLOWED_ORIGINS`, push
-2. **Add VectorStore abstraction**: 2-3 hour refactor that makes the codebase clean and future-proof against vector DB vendor changes
+1. **Fix Railway auto-deploy** (human) — 5-minute GitHub App permissions fix unlocks push-to-deploy
+2. **Migrate `@app.on_event` → `lifespan`** (Claude) — silence FastAPI deprecation warnings, future-proof startup logic
+3. **Remove `backend/requirements.txt`** (Claude, with confirmation) — clean up the one redundant file remaining from the Vercel era
