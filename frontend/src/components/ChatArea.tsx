@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 import MessageBubble from './MessageBubble';
 import InputArea from './InputArea';
-import { MessageSquare, GitMerge, Zap, Brain, Paperclip, Database } from 'lucide-react';
+import { MessageSquare, GitMerge, Zap, Brain, Paperclip, Database, Settings } from 'lucide-react';
 
 function ChatArea() {
   const {
@@ -120,9 +120,18 @@ function ChatArea() {
           </div>
 
           <div className="landing__cta">
-            <div className="landing__cta-text">
-              <MessageSquare size={16} />
-              <span>Create a new chat from the sidebar to get started</span>
+            <div className="landing__cta-text" style={{ flexDirection: 'column', gap: '10px', alignItems: 'flex-start' }}>
+              <span style={{ fontWeight: 600, fontSize: '13px', opacity: 0.7, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Get started in 2 steps</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ background: 'rgba(139,92,246,0.25)', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700, flexShrink: 0 }}>1</span>
+                <Settings size={14} style={{ opacity: 0.8, flexShrink: 0 }} />
+                <span>Click the <strong>⚙ gear icon</strong> (top-left) to add your API keys for OpenAI, Anthropic, or Gemini</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ background: 'rgba(139,92,246,0.25)', borderRadius: '50%', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700, flexShrink: 0 }}>2</span>
+                <MessageSquare size={14} style={{ opacity: 0.8, flexShrink: 0 }} />
+                <span>Click <strong>+ New Chat</strong> in the sidebar to start a conversation</span>
+              </div>
             </div>
           </div>
         </div>
