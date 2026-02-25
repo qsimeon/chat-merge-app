@@ -1,10 +1,10 @@
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from sqlalchemy.ext.asyncio import AsyncSession
 import logging
 
 from app.database import create_tables, async_session
@@ -14,11 +14,21 @@ from app.routes import chats, messages, api_keys, merge, attachments
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup lifecycle: create DB tables. Vector store initializes lazily on first use."""
+    logger.info("Creating database tables...")
+    await create_tables()
+    logger.info("Database tables created successfully")
+    yield
+
+
 # Create FastAPI app
 app = FastAPI(
     title="Chat Merge App",
     description="Multi-provider AI chat with intelligent merge",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 # CORS configuration
@@ -58,14 +68,6 @@ async def root():
     if frontend_index.exists():
         return FileResponse(frontend_index)
     return {"message": "Chat Merge App API. Frontend not found."}
-
-
-@app.on_event("startup")
-async def startup_event():
-    """Create database tables on startup. Vector store initializes lazily on first use."""
-    logger.info("Creating database tables...")
-    await create_tables()
-    logger.info("Database tables created successfully")
 
 
 @app.get("/health")

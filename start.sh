@@ -8,28 +8,16 @@ echo "  ChatMerge - Multi-Provider AI Chat App"
 echo "========================================="
 echo ""
 
-# Resolve uv (preferred) or fall back to pip
-if command -v uv &>/dev/null; then
-  USE_UV=true
-  echo "Using uv for Python dependency management."
-elif command -v python3 &>/dev/null; then
-  USE_UV=false
-  echo "uv not found — falling back to pip."
-else
-  echo "Error: No Python found. Install uv (https://github.com/astral-sh/uv) or python3."
+# Require uv
+if ! command -v uv &>/dev/null; then
+  echo "Error: uv not found. Install it from https://github.com/astral-sh/uv"
   exit 1
 fi
-
-echo ""
 
 # Install backend dependencies
 echo "[1/4] Installing backend dependencies..."
 cd "$SCRIPT_DIR/backend"
-if [ "$USE_UV" = true ]; then
-  uv sync -q
-else
-  pip3 install -r requirements.txt -q 2>&1 | tail -1
-fi
+uv sync -q
 echo "  Backend dependencies installed."
 
 # Install frontend dependencies
@@ -58,8 +46,4 @@ echo "  3. Create a new chat and start messaging!"
 echo "  4. Create multiple chats and use 'Merge Chats' to combine them"
 echo ""
 
-if [ "$USE_UV" = true ]; then
-  uv run uvicorn main:app --host 0.0.0.0 --port 8000
-else
-  python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
-fi
+uv run uvicorn main:app --host 0.0.0.0 --port 8000

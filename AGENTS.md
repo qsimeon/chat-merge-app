@@ -111,6 +111,7 @@ Never store API keys in plaintext — always use `encryption_service.encrypt_key
 | `PINECONE_API_KEY` | Optional | Enables RAG vector retrieval |
 | `DATABASE_URL` | Optional | PostgreSQL URL (defaults to SQLite) |
 | `ALLOWED_ORIGINS` | Optional | CORS origins (defaults to `*` for dev) |
+| `FERNET_KEY` | **Required in production** | Fernet encryption key for stored API keys. Without this, each Railway redeploy generates a new key and all stored API keys become unreadable. Generate: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
 
 ## Common Patterns
 

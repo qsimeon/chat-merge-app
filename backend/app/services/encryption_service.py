@@ -9,17 +9,26 @@ ENCRYPTION_KEY_FILE = ".encryption_key"
 
 
 def _get_or_create_encryption_key() -> bytes:
-    """Get or create the Fernet encryption key"""
+    """Get Fernet encryption key from env var (production) or local file (dev).
+
+    On Railway/production: set the FERNET_KEY environment variable to a stable
+    base64-encoded Fernet key so the key survives redeployments.  Generate one
+    with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+
+    Local dev: falls back to reading/creating the .encryption_key file.
+    """
+    env_key = os.getenv("FERNET_KEY")
+    if env_key:
+        return env_key.encode()
     if os.path.exists(ENCRYPTION_KEY_FILE):
         with open(ENCRYPTION_KEY_FILE, "rb") as f:
             return f.read()
-    else:
-        # Generate new key
-        key = Fernet.generate_key()
-        with open(ENCRYPTION_KEY_FILE, "wb") as f:
-            f.write(key)
-        logger.info("Generated new encryption key")
-        return key
+    # Local dev only — generate and persist
+    key = Fernet.generate_key()
+    with open(ENCRYPTION_KEY_FILE, "wb") as f:
+        f.write(key)
+    logger.info("Generated new encryption key")
+    return key
 
 
 # Get encryption key on module load
