@@ -83,7 +83,7 @@ python3 tests/playwright_full_test.py
 
 2. Register in `backend/app/providers/factory.py`
 
-3. Add models to `frontend/src/types.ts` in `PROVIDER_MODELS` and `LLM_PROVIDER_LABELS` (NOT `PROVIDER_LABELS` — that one includes Pinecone and is only for the Settings modal)
+3. Add models to `frontend/src/types.ts` in `PROVIDER_MODELS` and `LLM_PROVIDER_LABELS` (NOT `PROVIDER_LABELS` — that one includes Pinecone and is only for the Settings modal). Keep both frontend and backend model lists in sync.
 
 ## Database Schema
 
@@ -111,7 +111,17 @@ Never store API keys in plaintext — always use `encryption_service.encrypt_key
 | `PINECONE_API_KEY` | Optional | Enables RAG vector retrieval |
 | `DATABASE_URL` | Optional | PostgreSQL URL (defaults to SQLite) |
 | `ALLOWED_ORIGINS` | Optional | CORS origins (defaults to `*` for dev) |
-| `FERNET_KEY` | **Required in production** | Fernet encryption key for stored API keys. Without this, each Railway redeploy generates a new key and all stored API keys become unreadable. Generate: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
+| `FERNET_KEY` | **Required in production** | Fernet encryption key for stored API keys. Without this, each Railway redeploy generates a new key and all stored API keys become unreadable. Generate once: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
+
+## Current Model Lists (keep frontend/backend in sync)
+
+| Provider | Models |
+|----------|--------|
+| OpenAI | gpt-4o, gpt-4o-mini, gpt-4-turbo, o4-mini, o3, o3-mini |
+| Anthropic | claude-sonnet-4-6, claude-opus-4-6, claude-haiku-4-5-20251001 |
+| Gemini | gemini-2.5-flash, gemini-2.5-pro, gemini-2.0-flash |
+
+Update both `backend/app/providers/{provider}_provider.py` AVAILABLE_MODELS and `frontend/src/types.ts` PROVIDER_MODELS when changing models.
 
 ## Common Patterns
 

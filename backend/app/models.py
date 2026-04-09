@@ -1,6 +1,6 @@
 from sqlalchemy import Column, String, Text, DateTime, Boolean, JSON, ForeignKey, Integer
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 from app.database import Base
 
@@ -15,8 +15,8 @@ class Chat(Base):
     model = Column(String, nullable=False)
     system_prompt = Column(Text, nullable=True)
     is_merged = Column(Boolean, default=False)  # True for vector-fused merged chats
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Relationships
     messages = relationship(
@@ -56,7 +56,7 @@ class Message(Base):
     )
     role = Column(String, nullable=False)  # "user", "assistant", "system"
     content = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Relationships
     chat = relationship("Chat", back_populates="messages")
@@ -87,7 +87,7 @@ class APIKey(Base):
     provider = Column(String, nullable=False, unique=True)  # "openai", "anthropic", "gemini"
     encrypted_key = Column(Text, nullable=False)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     def to_dict(self):
         """Convert to dictionary (never include the actual key)"""
@@ -113,7 +113,7 @@ class Attachment(Base):
     file_type = Column(String, nullable=False)  # MIME type
     file_size = Column(Integer, nullable=False)  # bytes
     storage_path = Column(Text, nullable=False)  # local path or cloud URL
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Relationships
     message = relationship("Message", back_populates="attachments")
@@ -139,7 +139,7 @@ class MergeHistory(Base):
     source_chat_ids = Column(JSON, nullable=False)  # list of chat IDs
     merged_chat_id = Column(String, ForeignKey("chats.id"), nullable=False)
     merge_model = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     def to_dict(self):
         """Convert to dictionary"""

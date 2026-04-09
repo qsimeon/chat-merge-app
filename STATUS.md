@@ -1,90 +1,122 @@
-# Project Status — ChatMerge
-> Last reviewed: 2026-02-24
-> Reviewed by: Claude (deep scan)
+# Project Status -- ChatMerge
+> Last reviewed: 2026-04-08
+> Reviewed by: Claude (resituate -- full project recovery)
 
 ## Project Overview
 
-ChatMerge is a multi-provider AI chat app (OpenAI, Anthropic, Gemini) whose core innovation is **vector-fusion conversation merging**: merged chats fuse their Pinecone vector namespaces via nearest-neighbor averaging, and all context in the merged chat is delivered via RAG — no message copying, no context-window blowup. Users supply their own API keys. The app is live at [chat-merge-app-production.up.railway.app](https://chat-merge-app-production.up.railway.app).
+ChatMerge is a multi-provider AI chat app (OpenAI, Anthropic, Gemini) whose core innovation is **vector-fusion conversation merging**: merged chats fuse their Pinecone vector namespaces via nearest-neighbor averaging, and all context in the merged chat is delivered via RAG -- no message copying, no context-window blowup. Users supply their own API keys. Deployed to Railway.
+
+**Live URL**: `https://chat-merge-app-production.up.railway.app`
+
+## Architecture
+
+```
++-----------------------------------------------------------------+
+|                         Browser (React 18)                       |
+|  Zustand store --- api.ts --- SSE streaming --- dark theme UI    |
++----------------------------+------------------------------------+
+                             | HTTP / SSE
+                             v
++-----------------------------------------------------------------+
+|                     FastAPI (Python 3.11)                         |
+|                                                                   |
+|  Routes                    Services                               |
+|  +-- /api/chats           +-- chat_service      (CRUD)           |
+|  +-- /api/chats/{id}/     +-- completion_service (streaming +    |
+|  |   completions          |                      merged-chat RAG)|
+|  +-- /api/merge           +-- merge_service      (vector fusion) |
+|  +-- /api/attachments     +-- vector_service     (Pinecone ops)  |
+|  +-- /api/api-keys        +-- encryption_service (Fernet)        |
+|  +-- /health              +-- storage_service    (local files)   |
+|                                                                   |
+|  Providers                                                        |
+|  +-- openai_provider.py    (GPT-4o, o-series)                    |
+|  +-- anthropic_provider.py (Claude Sonnet/Opus/Haiku)            |
+|  +-- gemini_provider.py    (google-genai SDK)                    |
++----------+---------------------------+---------------------------+
+           |                           |
+           v                           v
+  +-----------------+       +-----------------------+
+  |  SQLite / PG    |       |  Pinecone Serverless   |
+  |  (SQLAlchemy    |       |  (text-embedding-3-    |
+  |   async)        |       |   small, 1536-dim)     |
+  |                 |       |                         |
+  |  Chat, Message, |       |  1 namespace per chat   |
+  |  APIKey,        |       |  fuse_namespaces() for  |
+  |  Attachment,    |       |  merged chats           |
+  |  MergeHistory   |       |                         |
+  +-----------------+       +-----------------------+
+```
+
+### How Merging Works
+
+```
+Chat A namespace (N vectors)      Chat B namespace (M vectors)
+         |                                  |
+         +------------------+---------------+
+                            v
+                   fuse_namespaces()
+           +-------------------------------------+
+           | For each vector in B:               |
+           |   cosine_sim with nearest in A      |
+           |   >= 0.82 -> average embeddings     |
+           |   <  0.82 -> keep as unique         |
+           +-------------------------------------+
+                            |
+                            v
+         Merged namespace (between max(N,M) and N+M vectors)
+                            |
+                  +-------------------+
+                  |  Every query in   |
+                  |  merged chat does |
+                  |  RAG against this |
+                  |  fused namespace  |
+                  +-------------------+
+```
 
 ## Progress Summary
 
 | Area | Status | Notes |
 |------|--------|-------|
-| Multi-provider chat (OpenAI / Anthropic / Gemini) | ✅ | All 3 providers stream correctly |
-| File & image uploads | ✅ | Drag-drop/paste; images sent to provider vision APIs |
-| Vector-fusion merge | ✅ | `fuse_namespaces()` nearest-neighbor + averaging |
-| Merged-chat RAG context | ✅ | `is_merged` flag, always-RAG path in completion_service |
-| Encrypted API key storage | ✅ | Fernet encryption |
-| Error message display | ✅ | Fixed: error no longer silently wiped after sendMessage |
-| Onboarding CTA (landing page) | ✅ | "Get started in 2 steps" guide for new users |
-| Railway deployment | ✅ | Live — Dockerfile builder, PostgreSQL plugin wired |
-| FastAPI lifespan migration | ✅ | `@app.on_event("startup")` → `lifespan` context manager |
-| `pyproject.toml` readme ref | ✅ | Stale `readme = "README.md"` line removed |
-| Fernet key stability (production) | ✅ | `encryption_service` now reads `FERNET_KEY` env var first |
-| Security audit | ✅ | No hardcoded secrets, no leaked keys, gitignore verified |
-| Railway auto-deploy | 👤 | GitHub App permissions issue — manual fix needed |
-| Playwright test suite (local) | ✅ | 9/9 passing |
-| Documentation | ✅ | All Vercel refs removed; Railway is sole deploy target |
-| File uploads in production | 👤 | Uploads reset on redeploy until persistent volume is mounted |
-| Auth / multi-user | ❓ | Intentionally absent for v1 demo |
+| Multi-provider chat (OpenAI / Anthropic / Gemini) | Done | All 3 providers stream correctly |
+| File & image uploads | Done | Drag-drop/paste; images sent to provider vision APIs |
+| Vector-fusion merge | Done | `fuse_namespaces()` nearest-neighbor + averaging |
+| Merged-chat RAG context | Done | `is_merged` flag, always-RAG path in completion_service |
+| Encrypted API key storage | Done | Fernet encryption with env-var key support |
+| Onboarding CTA (landing page) | Done | "Get started in 2 steps" guide |
+| Railway deployment | Done | Dockerfile builder, PostgreSQL plugin wired |
+| FastAPI lifespan migration | Done | Modern `lifespan` context manager |
+| Fernet key stability | Done | `encryption_service` reads `FERNET_KEY` env var first |
+| Playwright test suite | Done | 9/9 passing (local) |
+| Documentation | Done | AGENTS.md comprehensive; README accurate |
 
-## What's Complete
+## Current Model Lists
 
-The core product is **feature-complete for v1**:
-- All three LLM providers work with streaming SSE
-- File/image uploads with vision API support
-- Vector-fusion merge algorithm implemented and tested
-- Merged chats use RAG exclusively (zero context-window blowup)
-- Clean dark-themed UI with onboarding guide for new users
-- Full Playwright test suite (9/9 local)
-- Deployed to Railway with PostgreSQL; HTTPS works correctly
-- FastAPI startup uses modern `lifespan` context manager (no deprecation warnings)
+| Provider | Models |
+|----------|--------|
+| OpenAI | gpt-4o, gpt-4o-mini, gpt-4-turbo, o4-mini, o3, o3-mini |
+| Anthropic | claude-sonnet-4-6, claude-opus-4-6, claude-haiku-4-5-20251001 |
+| Gemini | gemini-2.5-flash, gemini-2.5-pro, gemini-2.0-flash |
 
-## What's Left
+## Fixes Applied (2026-04-08)
 
-### Human Action Needed
-- **Set `FERNET_KEY` on Railway** (CRITICAL — do this now) — Without it every redeploy generates a new Fernet key, silently making all stored API keys unreadable. Steps:
-  1. Generate a key once: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
-  2. Add it as `FERNET_KEY` in Railway → your service → Variables
-  3. Redeploy. Stored keys will survive all future redeploys.
-- **Set `ALLOWED_ORIGINS` on Railway** — Should be `https://chat-merge-app-production.up.railway.app`. Without it the default `["*"]` allows any origin (CORS).
-- **Fix Railway auto-deploy** — GitHub App permissions broke during setup. Fix:
-  1. github.com → Settings → Applications → Railway → Configure
-  2. Add `qsimeon/chat-merge-app` to the allowed repositories list
-  3. Back in Railway → your service → Settings → Source → reconnect
-- **Persistent file uploads** — Mount a Railway volume at `/app/backend/uploads` (service → Settings → Volumes). Without it, uploaded files vanish on each redeploy. For a no-uploads demo this is fine; for real use it matters.
-- **Verify production CTA** — Just pushed the "Get started in 2 steps" landing-page update. Trigger a manual Railway redeploy (until auto-deploy is fixed), then confirm it renders correctly.
-- **Pinecone in production** — The Pinecone index must be manually created or exist before a user adds a Pinecone API key. The app creates it lazily on first use, which may timeout on cold start. Consider pre-creating index `chatmerge` (dimension 1536, cosine, us-east-1) or documenting this for users.
+- Fixed: `gemini-1.5-pro` 404 NOT_FOUND -- updated to gemini-2.5-flash/2.5-pro/2.0-flash
+- Fixed: Frontend/backend OpenAI model list mismatch -- synced to o4-mini/o3/o3-mini
+- Fixed: Updated Anthropic models to Claude 4.5/4.6 family
+- Fixed: `datetime.utcnow` -> `datetime.now(timezone.utc)` in models.py (deprecated in 3.12)
+- Fixed: `min_items` -> `min_length` in schemas.py (Pydantic v2 deprecation)
+- Fixed: Added STATUS.md to .gitignore
+- Removed: Stale `COWORK_CODE_HANDOFF.md`
 
-### Claude Can Handle
-- **`backend/requirements.txt` redundancy** — Duplicates `pyproject.toml`. Only kept for `start.sh`'s `pip install` fallback path (when uv isn't present). Safe to delete if `start.sh` is updated to require uv (which is already the default for dev and Dockerfile).
-- **VectorStore abstraction** — Extract a `VectorStore` ABC from `vector_service.py`; add `PineconeVectorStore` implementation. Makes swapping to Qdrant/Weaviate/Chroma trivial.
+## Human Action Items (verify if done since Feb 24)
 
-## Cleanup Recommendations
+- **Set `FERNET_KEY` on Railway** -- Without it every redeploy generates a new key, making all stored API keys unreadable. Generate: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
+- **Set `ALLOWED_ORIGINS` on Railway** -- Should be `https://chat-merge-app-production.up.railway.app`
+- **Fix Railway auto-deploy** -- GitHub App permissions; manual redeploy needed until fixed
+- **Mount persistent volume** at `/app/backend/uploads` for file upload durability
 
-### Safe to Delete (with confirmation)
-- `backend/requirements.txt` — Exact duplicate of `pyproject.toml` deps. `start.sh` uses it only as a fallback when uv isn't present. If `start.sh`'s pip branch is removed (or left as-is), this file is maintenance overhead.
+## Deployment
 
-### Not a Problem (verified)
-- `.aqe/` files — gitignored, not tracked
-- `backend/chat_app.db`, `.encryption_key` — gitignored, not tracked
-- `frontend/dist/` — gitignored, built by Dockerfile
-- `backend/__pycache__/` — gitignored, not tracked
+**Stack**: Dockerfile builder -> Python 3.11-slim + Node 20 -> builds React dist -> uv sync -> uvicorn with `--proxy-headers`
 
-## Deployment Reference
-
-**Live URL**: `https://chat-merge-app-production.up.railway.app`
-
-**Stack**: Dockerfile builder → Python 3.11-slim + Node 20 → builds React dist → uv sync → uvicorn with `--proxy-headers`
-
-**Required env vars on Railway**:
-- `DATABASE_URL` — auto-injected by Railway PostgreSQL plugin
-- `ALLOWED_ORIGINS` — set to `https://chat-merge-app-production.up.railway.app`
-- `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `PINECONE_API_KEY` — user-supplied at runtime via Settings modal (stored encrypted in DB), OR set as Railway env vars for a pre-configured demo
-
-## Recommendations for Next Session
-
-1. **Set `FERNET_KEY` on Railway** (human, urgent) — generate key once, paste into Railway Variables; prevents stored-key wipeout on redeploy
-2. **Set `ALLOWED_ORIGINS` on Railway** (human) — lock CORS to your Railway domain
-3. **Fix Railway auto-deploy** (human) — 5-minute GitHub App permissions fix unlocks push-to-deploy
-4. **Persistent file uploads** (human) — mount Railway volume at `/app/backend/uploads` for production durability
+**Required env vars**: `DATABASE_URL` (auto-injected by Railway PostgreSQL), `ALLOWED_ORIGINS`, `FERNET_KEY`

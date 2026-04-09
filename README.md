@@ -8,7 +8,7 @@ People constantly have great conversations across different AI systems — deep 
 
 ## Features
 
-- **Multi-provider chat**: OpenAI (GPT-4o, o4-mini), Anthropic (Claude Sonnet/Opus/Haiku), Google Gemini — through one interface
+- **Multi-provider chat**: OpenAI (GPT-4o, o4-mini, o3), Anthropic (Claude Sonnet/Opus/Haiku 4.5+), Google Gemini (2.5 Flash/Pro) — through one interface
 - **Smart conversation merging**: Combine 2+ chats via vector-fusion — source namespaces are nearest-neighbor fused (not just concatenated), producing a compressed semantic representation of both conversations
 - **RAG-powered merged chats**: Every query in a merged chat retrieves the most relevant context from the fused vector store via Pinecone — no context-window explosions, scales to conversations of any length
 - **File & image uploads**: Drag-and-drop, paste, or pick files. Images sent natively to provider vision APIs
@@ -69,11 +69,52 @@ Pinecone is required for merged-chat RAG (the core feature). Without it, merged 
 
 ## Architecture
 
+### System Overview
+
+```
++-----------------------------------------------------------------+
+|                         Browser (React 18)                       |
+|  Zustand store --- api.ts --- SSE streaming --- dark theme UI    |
++----------------------------+------------------------------------+
+                             | HTTP / SSE
+                             v
++-----------------------------------------------------------------+
+|                     FastAPI (Python 3.11)                         |
+|                                                                   |
+|  Routes                    Services                               |
+|  +-- /api/chats           +-- chat_service      (CRUD)           |
+|  +-- /api/chats/{id}/     +-- completion_service (streaming +    |
+|  |   completions          |                      merged-chat RAG)|
+|  +-- /api/merge           +-- merge_service      (vector fusion) |
+|  +-- /api/attachments     +-- vector_service     (Pinecone ops)  |
+|  +-- /api/api-keys        +-- encryption_service (Fernet)        |
+|  +-- /health              +-- storage_service    (local files)   |
+|                                                                   |
+|  Providers                                                        |
+|  +-- openai_provider.py    (GPT-4o, o-series)                    |
+|  +-- anthropic_provider.py (Claude Sonnet/Opus/Haiku)            |
+|  +-- gemini_provider.py    (google-genai SDK)                    |
++----------+---------------------------+---------------------------+
+           |                           |
+           v                           v
+  +-----------------+       +-----------------------+
+  |  SQLite / PG    |       |  Pinecone Serverless   |
+  |  (SQLAlchemy    |       |  (text-embedding-3-    |
+  |   async)        |       |   small, 1536-dim)     |
+  |                 |       |                         |
+  |  Chat, Message, |       |  1 namespace per chat   |
+  |  APIKey,        |       |  fuse_namespaces() for  |
+  |  Attachment,    |       |  merged chats           |
+  |  MergeHistory   |       |                         |
+  +-----------------+       +-----------------------+
+```
+
+### Directory Structure
+
 ```
 chat-merge-app/
 ├── backend/
 │   ├── main.py               # FastAPI app, CORS, static serving, startup
-│   ├── requirements.txt
 │   └── app/
 │       ├── database.py       # SQLAlchemy async — SQLite or PostgreSQL
 │       ├── models.py         # Chat, Message, Attachment, APIKey, MergeHistory
@@ -81,7 +122,7 @@ chat-merge-app/
 │       ├── providers/
 │       │   ├── base.py       # Abstract BaseProvider + StreamChunk
 │       │   ├── openai_provider.py    # OpenAI + o-series reasoning
-│       │   ├── anthropic_provider.py # Claude + extended thinking
+│       │   ├── anthropic_provider.py # Claude 4.5/4.6
 │       │   └── gemini_provider.py    # Gemini via google-genai SDK
 │       ├── routes/
 │       │   ├── chats.py      # CRUD: /api/chats
@@ -114,6 +155,30 @@ chat-merge-app/
 
 ### How Merging Works
 
+```
+Chat A namespace (N vectors)      Chat B namespace (M vectors)
+         |                                  |
+         +------------------+---------------+
+                            v
+                   fuse_namespaces()
+           +-------------------------------------+
+           | For each vector in B:               |
+           |   cosine_sim with nearest in A      |
+           |   >= 0.82 -> average embeddings     |
+           |   <  0.82 -> keep as unique         |
+           +-------------------------------------+
+                            |
+                            v
+         Merged namespace (between max(N,M) and N+M vectors)
+                            |
+                  +-------------------+
+                  |  Every query in   |
+                  |  merged chat does |
+                  |  RAG against this |
+                  |  fused namespace  |
+                  +-------------------+
+```
+
 1. User selects 2+ chats and a provider/model for the merge
 2. **Vector fusion**: Source Pinecone namespaces are fused using nearest-neighbor averaging — semantically overlapping vectors from both chats are averaged into single embeddings; unique vectors are kept. Result size is between `max(|A|, |B|)` and `|A|+|B|`, not the full union
 3. **Empty merged chat**: The new merged chat has zero copied messages — the fused vector namespace is its entire memory
@@ -122,12 +187,11 @@ chat-merge-app/
 
 ### Provider Details
 
-| Provider | Streaming | Images | Notes |
-|----------|-----------|--------|-------|
-| OpenAI GPT-4o | ✅ | ✅ | Standard chat models |
-| OpenAI o4-mini/o3 | ✅ | ❌ | No `temperature`, uses `developer` role |
-| Anthropic Claude | ✅ | ✅ | Sonnet/Opus/Haiku via `claude-*-4-*` model IDs |
-| Google Gemini | ✅ | ✅ | google-genai SDK (NOT google-generativeai) |
+| Provider | Models | Streaming | Images | Notes |
+|----------|--------|-----------|--------|-------|
+| OpenAI | gpt-4o, gpt-4o-mini, gpt-4-turbo, o4-mini, o3, o3-mini | ✅ | ✅ (GPT) | o-series: no `temperature`, uses `developer` role |
+| Anthropic | claude-sonnet-4-6, claude-opus-4-6, claude-haiku-4-5-20251001 | ✅ | ✅ | Claude 4.5/4.6 family |
+| Google Gemini | gemini-2.5-flash, gemini-2.5-pro, gemini-2.0-flash | ✅ | ✅ | google-genai SDK (NOT google-generativeai) |
 
 ---
 
@@ -148,8 +212,13 @@ Railway runs the app as a **persistent process** — ideal for FastAPI with SSE 
 4. **Set environment variables** in Railway project → Variables:
    ```
    ALLOWED_ORIGINS=https://your-app.up.railway.app
+   FERNET_KEY=<generate once with the command below>
    ```
-   LLM and Pinecone API keys are optional at the server level — users set their own keys through the Settings UI.
+   Generate a stable Fernet key once:
+   ```bash
+   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+   ```
+   **Critical**: Without `FERNET_KEY`, every redeploy generates a new encryption key and all previously-stored API keys become unreadable. LLM and Pinecone API keys are optional at the server level — users set their own keys through the Settings UI.
 
 5. **Get your URL** — Railway assigns `https://your-app.up.railway.app`. Set that as `ALLOWED_ORIGINS` above.
 
@@ -212,6 +281,12 @@ healthcheckPath = "/health"
 
 **Database errors on first run**
 → Tables are created automatically on startup. If you see schema errors, delete `chat_app.db` (SQLite) or drop and recreate tables.
+
+**Stored API keys unreadable after Railway redeploy**
+→ Set `FERNET_KEY` as a Railway env var. Without it, each redeploy generates a new encryption key and orphans previously-encrypted data.
+
+**Gemini 404 NOT_FOUND**
+→ Google periodically sunsets older model IDs. Keep `backend/app/providers/gemini_provider.py` `AVAILABLE_MODELS` and `frontend/src/types.ts` `PROVIDER_MODELS.gemini` in sync with current model IDs from Google AI Studio.
 
 ---
 

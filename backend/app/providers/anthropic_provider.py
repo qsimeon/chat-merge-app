@@ -10,9 +10,9 @@ class AnthropicProvider(BaseProvider):
     """Anthropic provider implementation"""
 
     AVAILABLE_MODELS = [
-        "claude-sonnet-4-20250514",
-        "claude-haiku-4-20250414",
-        "claude-opus-4-20250514",
+        "claude-sonnet-4-6",
+        "claude-opus-4-6",
+        "claude-haiku-4-5-20251001",
     ]
 
     def __init__(self, api_key: str):

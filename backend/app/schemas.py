@@ -92,7 +92,7 @@ class APIKeyResponse(BaseModel):
 # Merge schemas
 class MergeRequest(BaseModel):
     """Request to merge multiple chats"""
-    chat_ids: List[str] = Field(..., min_items=2, description="At least 2 chat IDs")
+    chat_ids: List[str] = Field(..., min_length=2, description="At least 2 chat IDs")
     merge_provider: str = Field(..., description="Provider for merge model")
     merge_model: str = Field(..., description="Model to use for merging")
 

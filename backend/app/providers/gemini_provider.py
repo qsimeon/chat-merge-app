@@ -12,9 +12,9 @@ class GeminiProvider(BaseProvider):
     """Google Gemini provider implementation using the new google-genai SDK"""
 
     AVAILABLE_MODELS = [
+        "gemini-2.5-flash",
+        "gemini-2.5-pro",
         "gemini-2.0-flash",
-        "gemini-1.5-pro",
-        "gemini-1.5-flash",
     ]
 
     def __init__(self, api_key: str):
