@@ -76,6 +76,9 @@ logs
 .DS_Store
 Thumbs.db
 
+# Local planning/task files
+tasks/
+
 # Testing
 coverage/
 .coverage
