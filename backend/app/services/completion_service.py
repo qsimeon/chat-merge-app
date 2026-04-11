@@ -144,6 +144,16 @@ async def _build_merged_chat_context(
     else:
         logger.warning(f"Merged chat RAG returned 0 hits for chat {chat_id}")
 
+    if not hits:
+        # Explicitly tell the model it has no context — prevents hallucination
+        rag_context_block = (
+            "[No context retrieved from merged conversations. "
+            "Do NOT invent or guess information about the user or previous conversations. "
+            "Only use information explicitly provided in this message thread.]"
+        )
+        recent_history = await _build_message_history(prior_messages)
+        return rag_context_block, recent_history
+
     context_lines = ["[Retrieved context from merged conversations — most relevant to your query]", "---"]
     for hit in hits:
         metadata = hit["metadata"]
