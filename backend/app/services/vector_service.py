@@ -22,7 +22,7 @@ from pinecone import Pinecone, ServerlessSpec
 logger = logging.getLogger(__name__)
 
 EMBEDDING_MODEL_OPENAI = "text-embedding-3-small"
-EMBEDDING_MODEL_GEMINI = "embedding-001"  # universally available; 768-dim, same as text-embedding-004
+EMBEDDING_MODEL_GEMINI = "gemini-embedding-001"  # correct model name; supports outputDimensionality=768
 EMBEDDING_DIMENSION = 768   # unified: OpenAI with dimensions=768, Gemini natively 768
 INDEX_NAME = "chatmerge"
 
@@ -64,6 +64,7 @@ async def _embed_text_gemini_rest(text: str, gemini_key: str) -> List[float]:
             json={
                 "model": f"models/{EMBEDDING_MODEL_GEMINI}",
                 "content": {"parts": [{"text": text}]},
+                "outputDimensionality": EMBEDDING_DIMENSION,  # reduce from 3072 → 768
             },
         )
         if not response.is_success:
