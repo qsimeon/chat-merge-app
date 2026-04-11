@@ -184,12 +184,13 @@ async def merge_chats(
                 async for chunk in provider.stream_completion(
                     messages=[{"role": "user", "content": intro_prompt}],
                     model=merge_model,
-                    max_tokens=300,
+                    max_tokens=1024,  # 300 was too low for thinking models (e.g. gemini-2.5-pro)
                 ):
                     if chunk.type == "content":
                         intro_text += chunk.data
 
-                if intro_text.strip():
+                # Use generated intro only if it looks complete (>20 chars)
+                if intro_text.strip() and len(intro_text.strip()) > 20:
                     intro_content = intro_text.strip()
                     if fusion_warning:
                         intro_content += f"\n\n⚠ {fusion_warning}"
