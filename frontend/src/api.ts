@@ -1,11 +1,57 @@
-import { Chat, Message, APIKeyInfo, MergeRequest, StreamChunk, Attachment } from './types';
+import { Chat, Message, MergeRequest, StreamChunk, Attachment } from './types';
 
 const BASE_URL = '/api';
 
-async function* streamFetch(url: string, body: Record<string, unknown>): AsyncGenerator<StreamChunk> {
+// ─── Key storage (localStorage) ─────────────────────────────────────────────
+
+const KEY_NAMES: Record<string, string> = {
+  openai:    'chatmerge_key_openai',
+  anthropic: 'chatmerge_key_anthropic',
+  gemini:    'chatmerge_key_gemini',
+  pinecone:  'chatmerge_key_pinecone',
+};
+
+export function getStoredKeys(): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(KEY_NAMES).map(([provider, storageKey]) => [
+      provider,
+      localStorage.getItem(storageKey) || '',
+    ])
+  );
+}
+
+export function saveKey(provider: string, key: string): void {
+  const storageKey = KEY_NAMES[provider];
+  if (!storageKey) return;
+  localStorage.setItem(storageKey, key.trim());
+}
+
+export function removeKey(provider: string): void {
+  const storageKey = KEY_NAMES[provider];
+  if (!storageKey) return;
+  localStorage.removeItem(storageKey);
+}
+
+function keyHeaders(): Record<string, string> {
+  const keys = getStoredKeys();
+  const headers: Record<string, string> = {};
+  if (keys.openai)    headers['x-openai-key']    = keys.openai;
+  if (keys.anthropic) headers['x-anthropic-key'] = keys.anthropic;
+  if (keys.gemini)    headers['x-google-key']    = keys.gemini;
+  if (keys.pinecone)  headers['x-pinecone-key']  = keys.pinecone;
+  return headers;
+}
+
+// ─── SSE streaming helper ────────────────────────────────────────────────────
+
+async function* streamFetch(
+  url: string,
+  body: Record<string, unknown>,
+  extraHeaders: Record<string, string> = {},
+): AsyncGenerator<StreamChunk> {
   const response = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...extraHeaders },
     body: JSON.stringify(body),
   });
 
@@ -41,6 +87,8 @@ async function* streamFetch(url: string, body: Record<string, unknown>): AsyncGe
     reader.releaseLock();
   }
 }
+
+// ─── API ─────────────────────────────────────────────────────────────────────
 
 export const api = {
   // Chats
@@ -87,6 +135,7 @@ export const api = {
   async deleteChat(chatId: string): Promise<void> {
     const response = await fetch(`${BASE_URL}/chats/${chatId}`, {
       method: 'DELETE',
+      headers: keyHeaders(),
     });
     if (!response.ok) throw new Error('Failed to delete chat');
   },
@@ -98,12 +147,13 @@ export const api = {
     return response.json();
   },
 
-  // Streaming completion
+  // Streaming completion — includes API keys as headers
   streamCompletion(chatId: string, content: string, attachmentIds?: string[]) {
-    return streamFetch(`${BASE_URL}/chats/${chatId}/completions`, {
-      content,
-      attachment_ids: attachmentIds,
-    });
+    return streamFetch(
+      `${BASE_URL}/chats/${chatId}/completions`,
+      { content, attachment_ids: attachmentIds },
+      keyHeaders(),
+    );
   },
 
   // Attachments
@@ -123,40 +173,21 @@ export const api = {
     return `${BASE_URL}/attachments/${attachmentId}`;
   },
 
-  // API Keys
-  async getApiKeys(): Promise<APIKeyInfo[]> {
-    const response = await fetch(`${BASE_URL}/api-keys`);
-    if (!response.ok) throw new Error('Failed to fetch API keys');
-    return response.json();
-  },
-
-  async saveApiKey(provider: string, key: string): Promise<void> {
-    const response = await fetch(`${BASE_URL}/api-keys`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, api_key: key }),
-    });
-    if (!response.ok) throw new Error('Failed to save API key');
-  },
-
-  async deleteApiKey(keyId: string): Promise<void> {
-    const response = await fetch(`${BASE_URL}/api-keys/${keyId}`, {
-      method: 'DELETE',
-    });
-    if (!response.ok) throw new Error('Failed to delete API key');
-  },
-
-  // Merge
+  // Merge — includes API keys as headers
   streamMerge(data: MergeRequest) {
-    return streamFetch(`${BASE_URL}/merge`, {
-      chat_ids: data.chat_ids,
-      merge_provider: data.merge_provider,
-      merge_model: data.merge_model,
-    });
+    return streamFetch(
+      `${BASE_URL}/merge`,
+      {
+        chat_ids: data.chat_ids,
+        merge_provider: data.merge_provider,
+        merge_model: data.merge_model,
+      },
+      keyHeaders(),
+    );
   },
 
   // Health check
-  async getHealth(): Promise<{ status: string; rag_enabled: boolean; vector_store: string }> {
+  async getHealth(): Promise<{ status: string }> {
     const response = await fetch('/health');
     if (!response.ok) throw new Error('Failed to fetch health');
     return response.json();

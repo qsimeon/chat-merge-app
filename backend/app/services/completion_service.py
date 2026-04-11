@@ -5,11 +5,10 @@ from typing import AsyncGenerator, Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.models import Chat, Message, APIKey, Attachment
+from app.models import Chat, Message, Attachment
 from app.providers.factory import create_provider
 from app.providers.base import StreamChunk
 from app.services.chat_service import get_chat, get_messages, create_message
-from app.services.encryption_service import decrypt_key
 from app.services import vector_service, storage_service
 
 logger = logging.getLogger(__name__)
@@ -17,22 +16,6 @@ logger = logging.getLogger(__name__)
 USE_RAG = True
 RAG_CONTEXT_LIMIT = 8
 RECENT_MESSAGES_LIMIT = 10
-
-
-async def get_api_key(db: AsyncSession, provider: str) -> Optional[str]:
-    """Get and decrypt API key for a provider."""
-    result = await db.execute(
-        select(APIKey).where(APIKey.provider == provider).where(APIKey.is_active == True)
-    )
-    record = result.scalar_one_or_none()
-    if not record:
-        logger.warning(f"No active API key found for provider: {provider}")
-        return None
-    try:
-        return decrypt_key(record.encrypted_key)
-    except Exception as e:
-        logger.error(f"Failed to decrypt API key for {provider}: {e}")
-        return None
 
 
 async def _load_attachment_data(attachment: Attachment) -> Optional[dict]:
@@ -83,7 +66,8 @@ async def _build_rag_context(
     query_text: str,
     recent_messages: List[Message],
     pinecone_key: str,
-    openai_key: str,
+    openai_key: Optional[str] = None,
+    gemini_key: Optional[str] = None,
 ) -> List[dict]:
     """RAG context for regular (non-merged) chats: recent messages + vector-retrieved historical messages."""
     try:
@@ -92,6 +76,7 @@ async def _build_rag_context(
             query_text=query_text,
             pinecone_key=pinecone_key,
             openai_key=openai_key,
+            gemini_key=gemini_key,
             top_k=RAG_CONTEXT_LIMIT,
         )
 
@@ -131,7 +116,8 @@ async def _build_merged_chat_context(
     user_query: str,
     prior_messages: List[Message],
     pinecone_key: str,
-    openai_key: str,
+    openai_key: Optional[str] = None,
+    gemini_key: Optional[str] = None,
 ) -> tuple[str, List[dict]]:
     """
     Build context for merged chats via the fused RAG namespace.
@@ -145,6 +131,7 @@ async def _build_merged_chat_context(
         query_text=user_query,
         pinecone_key=pinecone_key,
         openai_key=openai_key,
+        gemini_key=gemini_key,
         top_k=8,
     )
 
@@ -164,7 +151,10 @@ async def _build_merged_chat_context(
         if metadata.get("type") == "fused":
             context_lines.append(content)
         else:
-            context_lines.append(f"[{metadata.get('role', 'assistant')}]: {content}")
+            line = f"[{metadata.get('role', 'assistant')}]: {content}"
+            if metadata.get("has_image") and metadata.get("role") == "user":
+                line += "\n[Note: The user attached an image to this message]"
+            context_lines.append(line)
         context_lines.append("---")
 
     rag_context_block = "\n".join(context_lines) if hits else ""
@@ -172,15 +162,11 @@ async def _build_merged_chat_context(
     return rag_context_block, recent_history
 
 
-async def _get_rag_keys(db: AsyncSession):
-    """Fetch Pinecone and OpenAI keys from DB."""
-    return await get_api_key(db, "pinecone"), await get_api_key(db, "openai")
-
-
 async def stream_chat_completion(
     db: AsyncSession,
     chat_id: str,
     user_content: str,
+    provider_keys: dict,
     temperature: float = 0.7,
     max_tokens: Optional[int] = None,
     attachment_ids: Optional[List[str]] = None,
@@ -214,8 +200,10 @@ async def stream_chat_completion(
                     if att_data:
                         current_attachment_data.append(att_data)
 
-        pinecone_key, openai_key = await _get_rag_keys(db)
-        rag_available = bool(pinecone_key and openai_key)
+        pinecone_key = provider_keys.get("pinecone") or ""
+        openai_key = provider_keys.get("openai") or ""
+        gemini_key = provider_keys.get("gemini") or ""
+        rag_available = bool(pinecone_key and (openai_key or gemini_key))
 
         is_merged = bool(chat.is_merged)
         dynamic_system_prompt = chat.system_prompt
@@ -228,7 +216,8 @@ async def stream_chat_completion(
                     user_query=user_content,
                     prior_messages=all_messages,
                     pinecone_key=pinecone_key,
-                    openai_key=openai_key,
+                    openai_key=openai_key or None,
+                    gemini_key=gemini_key or None,
                 )
                 if rag_context_block:
                     dynamic_system_prompt = ((chat.system_prompt or "") + "\n\n" + rag_context_block).strip()
@@ -239,12 +228,14 @@ async def stream_chat_completion(
             recent_messages = all_messages[-RECENT_MESSAGES_LIMIT:]
             message_history = await _build_rag_context(
                 db, chat_id, user_content, recent_messages,
-                pinecone_key=pinecone_key, openai_key=openai_key,
+                pinecone_key=pinecone_key,
+                openai_key=openai_key or None,
+                gemini_key=gemini_key or None,
             )
             logger.info(f"Using RAG for chat {chat_id} ({len(all_messages)} total messages)")
         else:
             if USE_RAG and len(all_messages) > RECENT_MESSAGES_LIMIT and not rag_available:
-                logger.info("RAG skipped: Pinecone or OpenAI key not configured")
+                logger.info("RAG skipped: Pinecone or embedding key not configured")
             message_history = await _build_message_history(all_messages)
 
         # Store user message vector (fire and forget)
@@ -255,8 +246,9 @@ async def stream_chat_completion(
                 content=user_content,
                 role="user",
                 pinecone_key=pinecone_key,
-                openai_key=openai_key,
-                attachments=[{"file_name": a["file_name"]} for a in current_attachment_data] or None,
+                openai_key=openai_key or None,
+                gemini_key=gemini_key or None,
+                attachments=[{"file_name": a["file_name"], "file_type": a.get("file_type", "")} for a in current_attachment_data] or None,
             ))
 
         # Gemini and Anthropic require conversations to start with a user turn.
@@ -270,7 +262,7 @@ async def stream_chat_completion(
             current_msg_dict["attachments"] = current_attachment_data
         message_history.append(current_msg_dict)
 
-        api_key = await get_api_key(db, chat.provider)
+        api_key = provider_keys.get(chat.provider) or ""
         if not api_key:
             yield StreamChunk(type="error", data=f"No API key configured for provider: {chat.provider}")
             return
@@ -307,7 +299,8 @@ async def stream_chat_completion(
                                 content=accumulated_content,
                                 role="assistant",
                                 pinecone_key=pinecone_key,
-                                openai_key=openai_key,
+                                openai_key=openai_key or None,
+                                gemini_key=gemini_key or None,
                             ))
                         yield StreamChunk(type="done", data=assistant_msg.id)
                     else:

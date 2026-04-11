@@ -16,8 +16,9 @@ function MergeModal() {
     clearMergeSelection,
   } = useStore();
 
-  const [mergeProvider, setMergeProvider] = useState('openai');
-  const [mergeModel, setMergeModel] = useState('gpt-4o');
+  const firstProvider = Object.keys(LLM_PROVIDER_LABELS)[0];
+  const [mergeProvider, setMergeProvider] = useState(firstProvider);
+  const [mergeModel, setMergeModel] = useState(PROVIDER_MODELS[firstProvider][0]);
 
   const handleClose = () => {
     clearMergeSelection();
@@ -49,11 +50,33 @@ function MergeModal() {
         <div className="modal__body">
           {!isMerging ? (
             <>
-              {/* RAG Status Banner — only show when confirmed enabled */}
-              {ragEnabled && (
+              {/* RAG Status Banner */}
+              {ragEnabled ? (
                 <div className="merge-modal__rag-status merge-modal__rag-status--enabled">
                   <Database size={14} />
                   <span>Smart fusion enabled — vector stores will be intelligently merged, not just concatenated</span>
+                </div>
+              ) : (
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: '8px',
+                  padding: '10px 14px',
+                  marginBottom: '16px',
+                  background: 'rgba(234, 179, 8, 0.1)',
+                  border: '1px solid rgba(234, 179, 8, 0.4)',
+                  borderRadius: '8px',
+                  color: '#fbbf24',
+                  fontSize: '13px',
+                  lineHeight: '1.5',
+                }}>
+                  <span style={{ flexShrink: 0, marginTop: '1px' }}>⚠</span>
+                  <span>
+                    <strong>RAG not configured.</strong> Smart fusion requires a <strong>Pinecone</strong> key
+                    plus either an <strong>OpenAI</strong> or <strong>Gemini</strong> key for embeddings.
+                    Without these, merged chats won't recall context from source conversations.
+                    Add keys in <strong>Settings</strong>.
+                  </span>
                 </div>
               )}
 

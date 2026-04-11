@@ -79,26 +79,6 @@ class Message(Base):
         }
 
 
-class APIKey(Base):
-    """Stored API keys (encrypted)"""
-    __tablename__ = "api_keys"
-
-    id = Column(String, primary_key=True, default=lambda: str(uuid4()))
-    provider = Column(String, nullable=False, unique=True)  # "openai", "anthropic", "gemini"
-    encrypted_key = Column(Text, nullable=False)
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-
-    def to_dict(self):
-        """Convert to dictionary (never include the actual key)"""
-        return {
-            "id": self.id,
-            "provider": self.provider,
-            "is_active": self.is_active,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-        }
-
-
 class Attachment(Base):
     """File/image attachments for messages"""
     __tablename__ = "attachments"

@@ -6,7 +6,6 @@ from app.models import MergeHistory
 from app.providers.factory import create_provider
 from app.providers.base import StreamChunk
 from app.services.chat_service import get_chat, get_messages, create_chat, create_message
-from app.services.completion_service import get_api_key, _get_rag_keys
 from app.services import vector_service
 from app.schemas import ChatCreate
 
@@ -47,6 +46,7 @@ async def merge_chats(
     chat_ids: List[str],
     merge_provider: str,
     merge_model: str,
+    provider_keys: dict,
 ) -> AsyncGenerator[StreamChunk, None]:
     """
     Merge multiple chats via vector fusion.
@@ -109,7 +109,9 @@ async def merge_chats(
         yield StreamChunk(type="content", data="Created merged chat (empty — context via RAG).\n")
 
         # Step 3: Fuse vector namespaces (the main work)
-        pinecone_key, openai_key = await _get_rag_keys(db)
+        pinecone_key = provider_keys.get("pinecone") or ""
+        openai_key = provider_keys.get("openai") or ""
+        gemini_key = provider_keys.get("gemini") or ""
         fusion_warning = None
 
         if not pinecone_key:
@@ -117,7 +119,6 @@ async def merge_chats(
                 type="error",
                 data="Pinecone key is required for merged chats. Add your Pinecone key in Settings."
             )
-            # Roll back the chat we just created
             await db.rollback()
             return
 
@@ -136,6 +137,15 @@ async def merge_chats(
                 type="content",
                 data=f"Vector fusion complete: {fused} pairs fused, {kept} unique kept → {total} total vectors.\n"
             )
+            if total == 0:
+                yield StreamChunk(
+                    type="warning",
+                    data=(
+                        "No vectors found in source chats — merged chat will have no RAG context. "
+                        "This usually means messages were sent before a Pinecone key and an OpenAI or Gemini key "
+                        "were both configured. Re-send messages in the source chats, then try merging again."
+                    )
+                )
         except Exception as e:
             logger.error(f"ERROR: Smart fusion failed — fell back to simple union merge. Reason: {e}")
             fusion_warning = f"Smart fusion failed — using simple union merge. Reason: {e}"
@@ -145,7 +155,7 @@ async def merge_chats(
                     source_chat_ids=chat_ids,
                     target_chat_id=merged_chat.id,
                     pinecone_key=pinecone_key,
-                    openai_key=openai_key,
+                    openai_key=openai_key or None,
                 )
                 yield StreamChunk(type="content", data="Fallback union merge complete.\n")
             except Exception as e2:
@@ -155,7 +165,7 @@ async def merge_chats(
         # Step 4: Generate AI intro message
         yield StreamChunk(type="content", data="Generating intro message...\n")
 
-        api_key = await get_api_key(db, merge_provider)
+        api_key = provider_keys.get(merge_provider) or ""
         intro_content = None
 
         if api_key:

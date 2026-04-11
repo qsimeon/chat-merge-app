@@ -7,8 +7,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import logging
 
-from app.database import create_tables, async_session
-from app.routes import chats, messages, api_keys, merge, attachments
+from app.database import create_tables
+from app.routes import chats, messages, merge, attachments
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -51,7 +51,6 @@ app.add_middleware(
 # Include routers
 app.include_router(chats.router)
 app.include_router(messages.router)
-app.include_router(api_keys.router)
 app.include_router(merge.router)
 app.include_router(attachments.router)
 
@@ -72,19 +71,8 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Health check — RAG status reflects whether user has saved a Pinecone key."""
-    from app.services.completion_service import _get_rag_keys
-    try:
-        async with async_session() as db:
-            pinecone_key, openai_key = await _get_rag_keys(db)
-            rag_ready = bool(pinecone_key and openai_key)
-    except Exception:
-        rag_ready = False
-    return {
-        "status": "ok",
-        "vector_store": "enabled" if rag_ready else "disabled",
-        "rag_enabled": rag_ready,
-    }
+    """Health check. RAG readiness is determined client-side from localStorage keys."""
+    return {"status": "ok"}
 
 
 if __name__ == "__main__":

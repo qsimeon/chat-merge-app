@@ -3,7 +3,7 @@ import asyncio
 from typing import List, Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.models import Chat, Message
 from app.schemas import ChatCreate
@@ -61,7 +61,7 @@ async def update_chat(
     if "system_prompt" in updates:
         chat.system_prompt = updates["system_prompt"]
 
-    chat.updated_at = datetime.utcnow()
+    chat.updated_at = datetime.now(timezone.utc)
     db.add(chat)
     await db.commit()
     await db.refresh(chat)
@@ -69,17 +69,15 @@ async def update_chat(
     return chat
 
 
-async def delete_chat(db: AsyncSession, chat_id: str) -> bool:
+async def delete_chat(db: AsyncSession, chat_id: str, pinecone_key: Optional[str] = None) -> bool:
     """Delete a chat and all its messages, including vector store namespace"""
     from app.services import vector_service
-    from app.services.completion_service import _get_rag_keys
 
     chat = await get_chat(db, chat_id)
     if not chat:
         return False
 
-    # Delete vector namespace (fire and forget — needs Pinecone key from DB)
-    pinecone_key, _ = await _get_rag_keys(db)
+    # Delete vector namespace (fire and forget — pinecone_key comes from request headers)
     if pinecone_key:
         asyncio.create_task(vector_service.delete_namespace(chat_id, pinecone_key))
 

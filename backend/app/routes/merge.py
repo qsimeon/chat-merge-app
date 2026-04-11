@@ -1,10 +1,10 @@
 import logging
 import json
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
 from app.database import async_session
-from app.schemas import MergeRequest, MergeResponse, ModelsResponse
+from app.schemas import MergeRequest, ModelsResponse
 from app.services.merge_service import merge_chats
 from app.providers.factory import get_all_models
 
@@ -18,7 +18,17 @@ def _sse_event(data: dict) -> str:
     return f"data: {json.dumps(data)}\n\n"
 
 
-async def _merge_stream_generator(merge_request: MergeRequest):
+def _extract_provider_keys(request: Request) -> dict:
+    """Extract API keys from request headers."""
+    return {
+        "openai":    request.headers.get("x-openai-key", ""),
+        "anthropic": request.headers.get("x-anthropic-key", ""),
+        "gemini":    request.headers.get("x-google-key", ""),
+        "pinecone":  request.headers.get("x-pinecone-key", ""),
+    }
+
+
+async def _merge_stream_generator(merge_request: MergeRequest, provider_keys: dict):
     """Generator for merge SSE streaming — creates its own DB session"""
     async with async_session() as db:
         try:
@@ -27,6 +37,7 @@ async def _merge_stream_generator(merge_request: MergeRequest):
                 merge_request.chat_ids,
                 merge_request.merge_provider,
                 merge_request.merge_model,
+                provider_keys=provider_keys,
             ):
                 yield _sse_event({
                     "type": chunk.type,
@@ -41,7 +52,7 @@ async def _merge_stream_generator(merge_request: MergeRequest):
 
 
 @router.post("/merge")
-async def merge_conversations(merge_request: MergeRequest):
+async def merge_conversations(request: Request, merge_request: MergeRequest):
     """Merge multiple chats into one using intelligent synthesis"""
     if len(merge_request.chat_ids) < 2:
         raise HTTPException(
@@ -49,8 +60,10 @@ async def merge_conversations(merge_request: MergeRequest):
             detail="At least 2 chat IDs required for merge"
         )
 
+    provider_keys = _extract_provider_keys(request)
+
     return StreamingResponse(
-        _merge_stream_generator(merge_request),
+        _merge_stream_generator(merge_request, provider_keys),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

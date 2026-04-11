@@ -1,13 +1,22 @@
 import { create } from 'zustand';
-import { Chat, Message, APIKeyInfo } from './types';
-import { api } from './api';
+import { Chat, Message } from './types';
+import { api, getStoredKeys, saveKey, removeKey } from './api';
+
+const EMBEDDING_PROVIDERS = ['openai', 'gemini'];
+
+function computeRagEnabled(savedProviders: string[]): boolean {
+  return (
+    savedProviders.includes('pinecone') &&
+    EMBEDDING_PROVIDERS.some(p => savedProviders.includes(p))
+  );
+}
 
 export interface AppState {
   // Data
   chats: Chat[];
   currentChatId: string | null;
   currentMessages: Message[];
-  apiKeys: APIKeyInfo[];
+  savedProviders: string[];   // providers with a key stored in localStorage
   ragEnabled: boolean;
 
   // UI state
@@ -30,7 +39,9 @@ export interface AppState {
   deleteChat: (chatId: string) => Promise<void>;
   updateChatTitle: (chatId: string, title: string) => Promise<void>;
   sendMessage: (content: string, files?: File[]) => Promise<void>;
-  loadApiKeys: () => Promise<void>;
+  loadApiKeys: () => void;
+  saveApiKey: (provider: string, key: string) => void;
+  deleteApiKey: (provider: string) => void;
   checkHealth: () => Promise<void>;
 
   // Merge
@@ -49,7 +60,7 @@ export const useStore = create<AppState>((set, get) => ({
   chats: [],
   currentChatId: null,
   currentMessages: [],
-  apiKeys: [],
+  savedProviders: [],
   ragEnabled: false,
   isLoading: false,
   isStreaming: false,
@@ -77,7 +88,7 @@ export const useStore = create<AppState>((set, get) => ({
   selectChat: async (chatId: string) => {
     try {
       set({ currentChatId: chatId, isLoading: true, error: null });
-      const chat = await api.getChat(chatId);
+      await api.getChat(chatId);
       const messages = await api.getMessages(chatId);
       set({ currentMessages: messages });
     } catch (error) {
@@ -160,7 +171,7 @@ export const useStore = create<AppState>((set, get) => ({
         content,
         created_at: new Date().toISOString(),
         attachments: attachmentIds ? files?.map((file, idx) => ({
-          id: attachmentIds[idx],
+          id: attachmentIds![idx],
           message_id: '',
           file_name: file.name,
           file_type: file.type,
@@ -176,7 +187,7 @@ export const useStore = create<AppState>((set, get) => ({
 
       let assistantContent = '';
 
-      // Stream completion
+      // Stream completion (keys sent as headers via api.streamCompletion)
       for await (const chunk of api.streamCompletion(state.currentChatId, content, attachmentIds)) {
         if (chunk.type === 'content') {
           assistantContent += chunk.data;
@@ -210,26 +221,38 @@ export const useStore = create<AppState>((set, get) => ({
       const pendingError = get().error;
       set({ isStreaming: false, streamingContent: '' });
       // Refresh chats list to update message counts — restore error afterward
-      // since loadChats() clears it via set({ error: null })
       await get().loadChats();
       if (pendingError) set({ error: pendingError });
     }
   },
 
-  loadApiKeys: async () => {
-    try {
-      set({ error: null });
-      const apiKeys = await api.getApiKeys();
-      set({ apiKeys });
-    } catch (error) {
-      set({ error: error instanceof Error ? error.message : 'Failed to load API keys' });
-    }
+  // Reads from localStorage — synchronous
+  loadApiKeys: () => {
+    const keys = getStoredKeys();
+    const savedProviders = Object.entries(keys)
+      .filter(([, v]) => !!v)
+      .map(([k]) => k);
+    set({ savedProviders, ragEnabled: computeRagEnabled(savedProviders) });
+  },
+
+  // Write to localStorage — synchronous
+  saveApiKey: (provider: string, key: string) => {
+    saveKey(provider, key);
+    get().loadApiKeys();
+  },
+
+  // Remove from localStorage — synchronous
+  deleteApiKey: (provider: string) => {
+    removeKey(provider);
+    get().loadApiKeys();
   },
 
   checkHealth: async () => {
     try {
-      const health = await api.getHealth();
-      set({ ragEnabled: health.rag_enabled });
+      await api.getHealth();
+      // ragEnabled is now derived from localStorage, not server state
+      // Re-compute in case store was hydrated before loadApiKeys ran
+      get().loadApiKeys();
     } catch {
       // Health check failure is non-critical
     }
@@ -283,12 +306,12 @@ export const useStore = create<AppState>((set, get) => ({
         set({ mergeProgress: 'Opening merged chat...' });
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
-        set((state) => ({
+        set({
           showMerge: false,
           mergeSelectedIds: [],
           isMerging: false,
           mergeProgress: '',
-        }));
+        });
 
         // Refresh chats list and open merged chat
         await get().loadChats();

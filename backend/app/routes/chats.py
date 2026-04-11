@@ -1,5 +1,5 @@
 import logging
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session
@@ -153,11 +153,13 @@ async def update_chat_metadata(
 @router.delete("/{chat_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_chat_endpoint(
     chat_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db)
 ):
     """Delete a chat and all its messages"""
     try:
-        success = await delete_chat(db, chat_id)
+        pinecone_key = request.headers.get("x-pinecone-key") or None
+        success = await delete_chat(db, chat_id, pinecone_key=pinecone_key)
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

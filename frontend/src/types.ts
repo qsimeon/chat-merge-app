@@ -30,13 +30,6 @@ export interface Message {
   attachments?: Attachment[];
 }
 
-export interface APIKeyInfo {
-  id: string;
-  provider: string;
-  is_active: boolean;
-  created_at: string;
-}
-
 export interface MergeRequest {
   chat_ids: string[];
   merge_provider: string;

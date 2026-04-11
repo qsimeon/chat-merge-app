@@ -74,21 +74,6 @@ class CompletionRequest(BaseModel):
     attachment_ids: Optional[List[str]] = Field(None, description="List of attachment IDs to include")
 
 
-# API Key schemas
-class APIKeyCreate(BaseModel):
-    """Create/update API key"""
-    provider: str = Field(..., description="openai, anthropic, or gemini")
-    api_key: str = Field(..., description="The actual API key")
-
-
-class APIKeyResponse(BaseModel):
-    """API key response (never includes the key itself)"""
-    id: str
-    provider: str
-    is_active: bool
-    created_at: Optional[str] = None
-
-
 # Merge schemas
 class MergeRequest(BaseModel):
     """Request to merge multiple chats"""

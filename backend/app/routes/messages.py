@@ -1,6 +1,6 @@
 import logging
 import json
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -72,9 +72,20 @@ def _sse_event(data: dict) -> str:
     return f"data: {json.dumps(data)}\n\n"
 
 
+def _extract_provider_keys(request: Request) -> dict:
+    """Extract API keys from request headers."""
+    return {
+        "openai":    request.headers.get("x-openai-key", ""),
+        "anthropic": request.headers.get("x-anthropic-key", ""),
+        "gemini":    request.headers.get("x-google-key", ""),
+        "pinecone":  request.headers.get("x-pinecone-key", ""),
+    }
+
+
 async def _stream_generator(
     chat_id: str,
     user_content: str,
+    provider_keys: dict,
     temperature: float = 0.7,
     max_tokens: int = None,
     attachment_ids: list[str] = None,
@@ -86,6 +97,7 @@ async def _stream_generator(
                 db,
                 chat_id,
                 user_content,
+                provider_keys=provider_keys,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 attachment_ids=attachment_ids,
@@ -105,9 +117,12 @@ async def _stream_generator(
 @router.post("/{chat_id}/completions")
 async def stream_completion(
     chat_id: str,
-    request: CompletionRequest,
+    request: Request,
+    body: CompletionRequest,
 ):
     """Stream chat completion using Server-Sent Events"""
+    provider_keys = _extract_provider_keys(request)
+
     # Verify chat exists using a quick session
     async with async_session() as db:
         chat = await get_chat(db, chat_id)
@@ -121,10 +136,11 @@ async def stream_completion(
     return StreamingResponse(
         _stream_generator(
             chat_id,
-            request.content,
-            temperature=request.temperature,
-            max_tokens=request.max_tokens,
-            attachment_ids=request.attachment_ids,
+            body.content,
+            provider_keys=provider_keys,
+            temperature=body.temperature,
+            max_tokens=body.max_tokens,
+            attachment_ids=body.attachment_ids,
         ),
         media_type="text/event-stream",
         headers={

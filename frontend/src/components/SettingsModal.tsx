@@ -1,47 +1,24 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useStore } from '../store';
 import { PROVIDER_LABELS } from '../types';
 import { X, Eye, EyeOff } from 'lucide-react';
-import { api } from '../api';
 
 function SettingsModal() {
-  const { apiKeys, loadApiKeys, setShowSettings } = useStore();
+  const { savedProviders, saveApiKey, deleteApiKey, setShowSettings } = useStore();
   const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
-  const [loadingProviders, setLoadingProviders] = useState<Record<string, boolean>>({});
 
-  useEffect(() => {
-    loadApiKeys();
-  }, []);
-
-  const handleSaveKey = async (provider: string) => {
+  const handleSaveKey = (provider: string) => {
     const key = keyInputs[provider];
-    if (!key.trim()) return;
-
-    try {
-      setLoadingProviders((prev) => ({ ...prev, [provider]: true }));
-      await api.saveApiKey(provider, key);
-      setKeyInputs((prev) => ({ ...prev, [provider]: '' }));
-      await loadApiKeys();
-    } catch (error) {
-      console.error('Failed to save API key:', error);
-    } finally {
-      setLoadingProviders((prev) => ({ ...prev, [provider]: false }));
-    }
+    if (!key?.trim()) return;
+    saveApiKey(provider, key.trim());
+    setKeyInputs((prev) => ({ ...prev, [provider]: '' }));
   };
 
-  const handleDeleteKey = async (keyId: string, provider: string) => {
-    if (!window.confirm(`Delete ${provider} API key?`)) return;
-
-    try {
-      setLoadingProviders((prev) => ({ ...prev, [provider]: true }));
-      await api.deleteApiKey(keyId);
-      await loadApiKeys();
-    } catch (error) {
-      console.error('Failed to delete API key:', error);
-    } finally {
-      setLoadingProviders((prev) => ({ ...prev, [provider]: false }));
-    }
+  const handleDeleteKey = (provider: string) => {
+    const label = PROVIDER_LABELS[provider] || provider;
+    if (!window.confirm(`Remove ${label} API key?`)) return;
+    deleteApiKey(provider);
   };
 
   const providers = Object.entries(PROVIDER_LABELS);
@@ -63,17 +40,38 @@ function SettingsModal() {
         </div>
 
         <div className="modal__body">
+          <div style={{
+            fontSize: '12px',
+            color: 'var(--text-tertiary)',
+            marginBottom: '16px',
+            lineHeight: '1.5',
+            padding: '8px 12px',
+            background: 'rgba(139, 92, 246, 0.08)',
+            borderRadius: '6px',
+          }}>
+            Keys are stored in your browser only — never sent to the server except as encrypted request headers during API calls.
+          </div>
+
           {providers.map(([key, label]) => {
-            const existingKey = apiKeys.find((k) => k.provider === key);
-            const isLoading = loadingProviders[key];
+            const hasKey = savedProviders.includes(key);
 
             return (
               <div key={key} className="settings-modal__section">
                 <div className="settings-modal__section-title">
                   {label}
                 </div>
+                {key === 'pinecone' && (
+                  <div style={{
+                    fontSize: '12px',
+                    color: 'var(--text-tertiary)',
+                    marginBottom: '8px',
+                    lineHeight: '1.5',
+                  }}>
+                    Enables smart vector fusion for merged chats. Requires an <strong style={{ color: 'var(--text-secondary)' }}>OpenAI</strong> or <strong style={{ color: 'var(--text-secondary)' }}>Gemini</strong> key to generate embeddings.
+                  </div>
+                )}
 
-                {existingKey ? (
+                {hasKey ? (
                   <div className="settings-modal__api-key-row">
                     <div className="settings-modal__api-key-info">
                       <div className="settings-modal__api-key-provider">
@@ -85,10 +83,9 @@ function SettingsModal() {
                     </div>
                     <button
                       className="btn btn--danger"
-                      onClick={() => handleDeleteKey(existingKey.id, key)}
-                      disabled={isLoading}
+                      onClick={() => handleDeleteKey(key)}
                     >
-                      {isLoading ? 'Deleting...' : 'Delete'}
+                      Remove
                     </button>
                   </div>
                 ) : (
@@ -109,7 +106,9 @@ function SettingsModal() {
                               [key]: e.target.value,
                             }))
                           }
-                          disabled={isLoading}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleSaveKey(key);
+                          }}
                         />
                         <button
                           className="api-key-input__toggle"
@@ -120,7 +119,6 @@ function SettingsModal() {
                             }))
                           }
                           type="button"
-                          disabled={isLoading}
                         >
                           {showKeys[key] ? (
                             <EyeOff size={18} />
@@ -134,9 +132,9 @@ function SettingsModal() {
                       <button
                         className="btn"
                         onClick={() => handleSaveKey(key)}
-                        disabled={!keyInputs[key]?.trim() || isLoading}
+                        disabled={!keyInputs[key]?.trim()}
                       >
-                        {isLoading ? 'Saving...' : 'Save'}
+                        Save
                       </button>
                     </div>
                   </div>

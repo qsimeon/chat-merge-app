@@ -1,11 +1,16 @@
 """
 Vector store service for RAG-based context retrieval.
 
-Uses Pinecone for serverless vector storage and OpenAI embeddings.
+Uses Pinecone for serverless vector storage and OpenAI or Google Gemini embeddings.
 Each chat gets its own namespace for vector isolation.
 
+Embedding providers (tried in order):
+  1. OpenAI text-embedding-3-small  (768-dim with dimension reduction)
+  2. Google text-embedding-004       (768-dim native)
+
+Both produce 768-dim vectors and share the same Pinecone index.
 Keys are user-provided (stored encrypted in DB), not env vars.
-All public functions accept pinecone_key and openai_key as explicit params.
+All public functions accept pinecone_key, openai_key, gemini_key as explicit params.
 """
 
 import logging
@@ -16,13 +21,15 @@ from pinecone import Pinecone, ServerlessSpec
 
 logger = logging.getLogger(__name__)
 
-EMBEDDING_MODEL = "text-embedding-3-small"
-EMBEDDING_DIMENSION = 1536
+EMBEDDING_MODEL_OPENAI = "text-embedding-3-small"
+EMBEDDING_MODEL_GEMINI = "models/text-embedding-004"
+EMBEDDING_DIMENSION = 768   # unified: OpenAI with dimensions=768, Gemini natively 768
 INDEX_NAME = "chatmerge"
 
 # Per-key client caches (avoids recreating connections on every call)
 _pinecone_index_cache: Dict[str, Any] = {}
 _openai_client_cache: Dict[str, AsyncOpenAI] = {}
+_gemini_client_cache: Dict[str, Any] = {}
 # Track which Pinecone keys have had their index verified
 _index_verified: set = set()
 
@@ -40,6 +47,18 @@ def _get_openai_client(openai_key: str) -> AsyncOpenAI:
     return _openai_client_cache[openai_key]
 
 
+def _get_gemini_client(gemini_key: str):
+    if gemini_key not in _gemini_client_cache:
+        from google import genai
+        _gemini_client_cache[gemini_key] = genai.Client(api_key=gemini_key)
+    return _gemini_client_cache[gemini_key]
+
+
+def is_configured() -> bool:
+    """Compatibility shim — callers should check keys explicitly."""
+    return False
+
+
 async def ensure_index_exists(pinecone_key: str):
     """Create the Pinecone index if it doesn't exist yet. Called lazily on first use."""
     if pinecone_key in _index_verified:
@@ -48,7 +67,7 @@ async def ensure_index_exists(pinecone_key: str):
         pc = Pinecone(api_key=pinecone_key)
         existing = [idx.name for idx in pc.list_indexes()]
         if INDEX_NAME not in existing:
-            logger.info(f"Creating Pinecone index: {INDEX_NAME}")
+            logger.info(f"Creating Pinecone index: {INDEX_NAME} (dim={EMBEDDING_DIMENSION})")
             pc.create_index(
                 name=INDEX_NAME,
                 dimension=EMBEDDING_DIMENSION,
@@ -64,10 +83,35 @@ async def ensure_index_exists(pinecone_key: str):
         raise
 
 
-async def embed_text(text: str, openai_key: str) -> List[float]:
-    client = _get_openai_client(openai_key)
-    response = await client.embeddings.create(model=EMBEDDING_MODEL, input=text)
-    return response.data[0].embedding
+async def embed_text(
+    text: str,
+    openai_key: Optional[str] = None,
+    gemini_key: Optional[str] = None,
+) -> List[float]:
+    """
+    Embed text using OpenAI (preferred) or Gemini (fallback).
+
+    Both providers produce 768-dim vectors compatible with the same Pinecone index:
+    - OpenAI text-embedding-3-small with dimensions=768
+    - Google text-embedding-004 (natively 768-dim)
+    """
+    if openai_key:
+        client = _get_openai_client(openai_key)
+        response = await client.embeddings.create(
+            model=EMBEDDING_MODEL_OPENAI,
+            input=text,
+            dimensions=EMBEDDING_DIMENSION,
+        )
+        return response.data[0].embedding
+    elif gemini_key:
+        client = _get_gemini_client(gemini_key)
+        result = await client.aio.models.embed_content(
+            model=EMBEDDING_MODEL_GEMINI,
+            contents=text,
+        )
+        return result.embedding.values
+    else:
+        raise ValueError("embed_text: neither openai_key nor gemini_key provided")
 
 
 async def store_message_vector(
@@ -76,21 +120,32 @@ async def store_message_vector(
     content: str,
     role: str,
     pinecone_key: str,
-    openai_key: str,
+    openai_key: Optional[str] = None,
+    gemini_key: Optional[str] = None,
     attachments: Optional[List[Dict[str, Any]]] = None,
 ):
     """Store a message embedding in the chat's Pinecone namespace."""
-    if not pinecone_key or not openai_key:
+    if not pinecone_key or not (openai_key or gemini_key):
         return
     try:
         await ensure_index_exists(pinecone_key)
 
         text_to_embed = content
+        has_image = False
         if attachments:
             for att in attachments:
-                text_to_embed += f"\n\n[Attachment: {att.get('file_name', 'unknown')}]"
+                fname = att.get("file_name", "unknown")
+                ftype = att.get("file_type", "")
+                is_img = ftype.startswith("image/") or fname.lower().endswith(
+                    (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
+                )
+                text_to_embed += f"\n\n[Attachment: {fname}]"
+                if is_img:
+                    has_image = True
+        if has_image:
+            text_to_embed += "\n[The user shared an image in this message]"
 
-        embedding = await embed_text(text_to_embed, openai_key)
+        embedding = await embed_text(text_to_embed, openai_key=openai_key, gemini_key=gemini_key)
         index = _get_pinecone_index(pinecone_key)
         index.upsert(
             vectors=[{
@@ -101,6 +156,7 @@ async def store_message_vector(
                     "role": role,
                     "content": content[:1000],
                     "has_attachments": bool(attachments),
+                    "has_image": has_image,
                 },
             }],
             namespace=chat_id,
@@ -114,15 +170,16 @@ async def query_relevant_context(
     chat_id: str,
     query_text: str,
     pinecone_key: str,
-    openai_key: str,
+    openai_key: Optional[str] = None,
+    gemini_key: Optional[str] = None,
     top_k: int = 5,
 ) -> List[Dict[str, Any]]:
     """Query the vector store for messages relevant to query_text."""
-    if not pinecone_key or not openai_key:
+    if not pinecone_key or not (openai_key or gemini_key):
         return []
     try:
         await ensure_index_exists(pinecone_key)
-        query_embedding = await embed_text(query_text, openai_key)
+        query_embedding = await embed_text(query_text, openai_key=openai_key, gemini_key=gemini_key)
         index = _get_pinecone_index(pinecone_key)
         results = index.query(
             vector=query_embedding,
@@ -145,7 +202,7 @@ async def merge_vector_namespaces(
     source_chat_ids: List[str],
     target_chat_id: str,
     pinecone_key: str,
-    openai_key: str,
+    openai_key: Optional[str] = None,
 ) -> bool:
     """
     Copy all vectors from source namespaces into the merged chat's namespace.
