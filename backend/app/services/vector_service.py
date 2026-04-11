@@ -22,7 +22,7 @@ from pinecone import Pinecone, ServerlessSpec
 logger = logging.getLogger(__name__)
 
 EMBEDDING_MODEL_OPENAI = "text-embedding-3-small"
-EMBEDDING_MODEL_GEMINI = "models/text-embedding-004"
+EMBEDDING_MODEL_GEMINI = "text-embedding-004"  # no "models/" prefix in google-genai SDK
 EMBEDDING_DIMENSION = 768   # unified: OpenAI with dimensions=768, Gemini natively 768
 INDEX_NAME = "chatmerge"
 
@@ -109,7 +109,13 @@ async def embed_text(
             model=EMBEDDING_MODEL_GEMINI,
             contents=text,
         )
-        return result.embedding.values
+        # google-genai SDK returns embeddings (plural list) for embed_content
+        if hasattr(result, "embeddings") and result.embeddings:
+            return list(result.embeddings[0].values)
+        elif hasattr(result, "embedding") and result.embedding:
+            return list(result.embedding.values)
+        else:
+            raise ValueError(f"Unexpected embed_content response structure: {result}")
     else:
         raise ValueError("embed_text: neither openai_key nor gemini_key provided")
 
@@ -163,7 +169,7 @@ async def store_message_vector(
         )
         logger.info(f"Stored vector for message {message_id} in namespace {chat_id}")
     except Exception as e:
-        logger.error(f"Failed to store message vector: {e}")
+        logger.error(f"Failed to store message vector for {message_id}: {type(e).__name__}: {e}", exc_info=True)
 
 
 async def query_relevant_context(
