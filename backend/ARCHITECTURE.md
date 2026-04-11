@@ -19,8 +19,8 @@ ChatMerge is a modular, async-first FastAPI backend that orchestrates multi-prov
     │ /chats  │        │Completion│      │ OpenAI   │
     │ /msgs   │        │Merge    │       │Anthropic │
     │ /attach │        │Vector   │       │ Gemini   │
-    │ /keys   │        │Storage  │       │          │
-    │ /merge  │        │Encrypt  │       └────┬─────┘
+    │ /merge  │        │Storage  │       │          │
+    │ /models │        │         │       └────┬─────┘
     └────┬────┘        └────┬────┘            │
          │                  │                  │
          └──────────────────┼──────────────────┘
@@ -36,7 +36,6 @@ ChatMerge is a modular, async-first FastAPI backend that orchestrates multi-prov
       │ Chat         │             └──────────────┘
       │ Message      │
       │ Attachment   │
-      │ APIKey       │
       │ MergeHistory │
       └──────────────┘
 ```
@@ -50,7 +49,7 @@ Creates and configures the FastAPI app:
 - Registers all routers
 - Mounts static files (for frontend dist)
 - Runs startup: creates DB tables, runs `is_merged` column migration
-- Health check endpoint at `/health` (includes `rag_enabled` flag)
+- Health check endpoint at `/health` (liveness only)
 
 ### Database Layer: app/database.py
 
@@ -79,9 +78,6 @@ async with async_session() as session:
 #### Attachment
 - `id`, `message_id` (FK cascade), `file_name`, `file_type`, `file_size`
 - `storage_path` — local path (or Railway volume path in production)
-
-#### APIKey
-- `id`, `provider` (unique), `encrypted_key`, `is_active`
 
 #### MergeHistory
 - `id`, `source_chat_ids` (JSON), `merged_chat_id` (FK), `merge_model`
@@ -135,12 +131,6 @@ On Railway, mount a persistent volume at `/app/backend/uploads` so files survive
 - `get_file(path)` → returns bytes or None
 - `delete_file(path)` → removes file
 
-#### encryption_service.py — API Key Security
-
-Fernet symmetric encryption. Key stored in `.encryption_key` (gitignored).
-- `encrypt_key(plain)` → encrypted string stored in DB
-- `decrypt_key(encrypted)` → plaintext for provider calls
-
 ### Providers: app/providers/
 
 #### BaseProvider (base.py)
@@ -176,7 +166,6 @@ async def stream_completion(
 | `chats.py` | `GET/POST /api/chats`, `GET/PATCH/DELETE /api/chats/{id}` |
 | `messages.py` | `GET /api/chats/{id}/messages`, `POST /api/chats/{id}/completions` (SSE) |
 | `attachments.py` | `POST /api/attachments`, `GET /api/attachments/{id}`, `DELETE /api/attachments/{id}` |
-| `api_keys.py` | `GET/POST /api/api-keys`, `DELETE /api/api-keys/{id}` |
 | `merge.py` | `POST /api/merge` (SSE), `GET /api/models` |
 
 ## Data Flow: Vector-Fusion Merge

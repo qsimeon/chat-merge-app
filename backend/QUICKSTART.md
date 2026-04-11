@@ -13,18 +13,13 @@ uv sync
 
 ## 2. Configure API Keys
 
-```bash
-# Copy example to .env
-cp .env.example .env
+API keys are **browser-side** — you enter them in the Settings modal (gear icon) in the UI, not in `.env`. They are stored in `localStorage` and sent as request headers. The server never stores them.
 
-# Edit .env with your keys
-nano .env  # or use your editor
-```
-
-You'll need at least one API key. Get them from:
-- **OpenAI**: https://platform.openai.com/api-keys
+You'll need at least one LLM key plus (optionally) Pinecone for smart merge:
 - **Anthropic**: https://console.anthropic.com/
 - **Google Gemini**: https://aistudio.google.com/app/apikey
+- **OpenAI**: https://platform.openai.com/api-keys (optional)
+- **Pinecone**: https://app.pinecone.io/ (optional — enables RAG for merged chats)
 
 ## 3. Start Server
 
@@ -82,24 +77,7 @@ curl http://localhost:8000/api/chats/$CHAT_ID | jq
 
 ## API Key Management
 
-### Store API Key
-
-```bash
-curl -X POST http://localhost:8000/api/api-keys/ \
-  -H "Content-Type: application/json" \
-  -d '{
-    "provider": "openai",
-    "api_key": "sk-..."
-  }'
-```
-
-### List Stored Keys
-
-```bash
-curl http://localhost:8000/api/api-keys/ | jq
-```
-
-Note: The actual keys are never returned, only provider names and status.
+Keys are browser-only. Open the app in your browser → gear icon → Settings → enter your keys. They are saved to `localStorage` and sent as headers on each streaming request. There is no server-side `/api/api-keys` endpoint.
 
 ## Merge Conversations
 
@@ -183,9 +161,7 @@ sqlite> .quit
 
 ### No API key configured error
 
-Make sure you've:
-1. Created .env file with API keys
-2. Called POST /api/api-keys/ to store them in the database
+Open the Settings modal (gear icon) and enter your API key for the provider you're trying to use. Keys are stored in browser localStorage — clearing your browser data removes them.
 
 ### Connection refused
 

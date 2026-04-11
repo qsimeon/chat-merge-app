@@ -1,10 +1,10 @@
-# Project Status -- ChatMerge
-> Last reviewed: 2026-04-08
-> Reviewed by: Claude (resituate -- full project recovery)
+# Project Status — ChatMerge
+> Last reviewed: 2026-04-10
+> Reviewed by: Claude (deep scan)
 
 ## Project Overview
 
-ChatMerge is a multi-provider AI chat app (OpenAI, Anthropic, Gemini) whose core innovation is **vector-fusion conversation merging**: merged chats fuse their Pinecone vector namespaces via nearest-neighbor averaging, and all context in the merged chat is delivered via RAG -- no message copying, no context-window blowup. Users supply their own API keys. Deployed to Railway.
+ChatMerge is a multi-provider AI chat app (OpenAI, Anthropic, Gemini) whose core feature is **vector-fusion conversation merging**: merged chats fuse their Pinecone vector namespaces via nearest-neighbor averaging, and all context is delivered via RAG — no message copying, no context-window blowup. API keys are browser-side (localStorage → request headers). Live at Railway.
 
 **Live URL**: `https://chat-merge-app-production.up.railway.app`
 
@@ -12,10 +12,11 @@ ChatMerge is a multi-provider AI chat app (OpenAI, Anthropic, Gemini) whose core
 
 ```
 +-----------------------------------------------------------------+
-|                         Browser (React 18)                       |
+|                    Browser (React 18)                            |
+|  localStorage keys -> request headers on streaming calls         |
 |  Zustand store --- api.ts --- SSE streaming --- dark theme UI    |
 +----------------------------+------------------------------------+
-                             | HTTP / SSE
+                             | HTTP / SSE (keys in headers)
                              v
 +-----------------------------------------------------------------+
 |                     FastAPI (Python 3.11)                         |
@@ -26,69 +27,45 @@ ChatMerge is a multi-provider AI chat app (OpenAI, Anthropic, Gemini) whose core
 |  |   completions          |                      merged-chat RAG)|
 |  +-- /api/merge           +-- merge_service      (vector fusion) |
 |  +-- /api/attachments     +-- vector_service     (Pinecone ops)  |
-|  +-- /api/api-keys        +-- encryption_service (Fernet)        |
-|  +-- /health              +-- storage_service    (local files)   |
-|                                                                   |
-|  Providers                                                        |
-|  +-- openai_provider.py    (GPT-4o, o-series)                    |
-|  +-- anthropic_provider.py (Claude Sonnet/Opus/Haiku)            |
-|  +-- gemini_provider.py    (google-genai SDK)                    |
-+----------+---------------------------+---------------------------+
-           |                           |
-           v                           v
-  +-----------------+       +-----------------------+
-  |  SQLite / PG    |       |  Pinecone Serverless   |
-  |  (SQLAlchemy    |       |  (text-embedding-3-    |
-  |   async)        |       |   small, 1536-dim)     |
-  |                 |       |                         |
-  |  Chat, Message, |       |  1 namespace per chat   |
-  |  APIKey,        |       |  fuse_namespaces() for  |
-  |  Attachment,    |       |  merged chats           |
-  |  MergeHistory   |       |                         |
-  +-----------------+       +-----------------------+
-```
-
-### How Merging Works
-
-```
-Chat A namespace (N vectors)      Chat B namespace (M vectors)
-         |                                  |
-         +------------------+---------------+
-                            v
-                   fuse_namespaces()
-           +-------------------------------------+
-           | For each vector in B:               |
-           |   cosine_sim with nearest in A      |
-           |   >= 0.82 -> average embeddings     |
-           |   <  0.82 -> keep as unique         |
-           +-------------------------------------+
-                            |
-                            v
-         Merged namespace (between max(N,M) and N+M vectors)
-                            |
-                  +-------------------+
-                  |  Every query in   |
-                  |  merged chat does |
-                  |  RAG against this |
-                  |  fused namespace  |
-                  +-------------------+
+|  +-- /api/models          +-- storage_service    (local files)   |
+|  +-- /health                                                      |
++-----------+-----------------------------+-------------------------+
+            |                             |
+            v                             v
+   +-----------------+       +-----------------------+
+   |  SQLite / PG    |       |  Pinecone Serverless   |
+   |  (SQLAlchemy)   |       |  768-dim, 1 namespace  |
+   |                 |       |  per chat              |
+   |  Chat, Message, |       |  OpenAI or Gemini emb. |
+   |  Attachment,    |       |  fuse_namespaces() for |
+   |  MergeHistory   |       |  merged chats          |
+   +-----------------+       +-----------------------+
 ```
 
 ## Progress Summary
 
 | Area | Status | Notes |
 |------|--------|-------|
-| Multi-provider chat (OpenAI / Anthropic / Gemini) | Done | All 3 providers stream correctly |
-| File & image uploads | Done | Drag-drop/paste; images sent to provider vision APIs |
-| Vector-fusion merge | Done | `fuse_namespaces()` nearest-neighbor + averaging |
-| Merged-chat RAG context | Done | `is_merged` flag, always-RAG path in completion_service |
-| Encrypted API key storage | Done | Fernet encryption with env-var key support |
-| Onboarding CTA (landing page) | Done | "Get started in 2 steps" guide |
-| Railway deployment | Done | Dockerfile builder, PostgreSQL plugin wired |
-| FastAPI lifespan migration | Done | Modern `lifespan` context manager |
-| Fernet key stability | Done | `encryption_service` reads `FERNET_KEY` env var first |
-| Playwright test suite | Done | 9/9 passing (local) |
-| Documentation | Done | AGENTS.md comprehensive; README accurate |
+| Multi-provider chat (OpenAI / Anthropic / Gemini) | ✅ | All 3 providers stream correctly |
+| File & image uploads | ✅ | Drag-drop/paste; images sent to provider vision APIs |
+| Vector-fusion merge | ✅ | `fuse_namespaces()` nearest-neighbor + averaging |
+| Gemini embedding fallback | ✅ | RAG works with Pinecone + Gemini (no OpenAI required) |
+| Merged-chat RAG context | ✅ | `is_merged` flag, always-RAG path in completion_service |
+| Client-side API key storage | ✅ | Keys in localStorage, sent as headers — never server-side |
+| Image memory in RAG | ✅ | `has_image` metadata + text annotation in embeddings |
+| RAG warning UI | ✅ | Merge modal warns when embedding key missing |
+| Settings modal Pinecone note | ✅ | Inline note explains embedding key dependency |
+| Railway deployment | ✅ | Dockerfile builder, PostgreSQL plugin wired |
+| Playwright test suite | 🔧 | 9/9 tests were passing; need re-run after client-side key refactor |
+| Railway auto-deploy | 👤 | GitHub App permissions issue — manual fix needed |
+| Persistent file uploads | 👤 | Mount Railway volume at `/app/backend/uploads` |
+
+## Embedding Fix History (important for debugging)
+
+The Gemini embedding stack required 3 fixes to get working:
+1. **Model name**: `"models/text-embedding-004"` → `"text-embedding-004"` (SDK auto-prepends `models/`)
+2. **Response parsing**: `result.embedding.values` → `result.embeddings[0].values` (plural list)
+3. **API version**: `v1beta` → `v1` (chat uses v1beta; `text-embedding-004` only on stable v1)
 
 ## Current Model Lists
 
@@ -98,25 +75,33 @@ Chat A namespace (N vectors)      Chat B namespace (M vectors)
 | Anthropic | claude-sonnet-4-6, claude-opus-4-6, claude-haiku-4-5-20251001 |
 | Gemini | gemini-2.5-flash, gemini-2.5-pro, gemini-2.0-flash |
 
-## Fixes Applied (2026-04-08)
+Embedding: `text-embedding-3-small` (OpenAI, 768-dim with reduction) or `text-embedding-004` (Gemini v1, 768-dim)
 
-- Fixed: `gemini-1.5-pro` 404 NOT_FOUND -- updated to gemini-2.5-flash/2.5-pro/2.0-flash
-- Fixed: Frontend/backend OpenAI model list mismatch -- synced to o4-mini/o3/o3-mini
-- Fixed: Updated Anthropic models to Claude 4.5/4.6 family
-- Fixed: `datetime.utcnow` -> `datetime.now(timezone.utc)` in models.py (deprecated in 3.12)
-- Fixed: `min_items` -> `min_length` in schemas.py (Pydantic v2 deprecation)
-- Fixed: Added STATUS.md to .gitignore
-- Removed: Stale `COWORK_CODE_HANDOFF.md`
+## What's Left
 
-## Human Action Items (verify if done since Feb 24)
+### Human Action Needed
+- **Fix Railway auto-deploy** — GitHub App permissions; go to github.com → Settings → Applications → Railway → Configure → add `qsimeon/chat-merge-app`
+- **Mount Railway volume** at `/app/backend/uploads` (service → Settings → Volumes) for file upload durability across redeploys
+- **Verify Pinecone** — After `v1` API fix, confirm vectors are being stored by checking Pinecone console after sending a message
 
-- **Set `FERNET_KEY` on Railway** -- Without it every redeploy generates a new key, making all stored API keys unreadable. Generate: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
-- **Set `ALLOWED_ORIGINS` on Railway** -- Should be `https://chat-merge-app-production.up.railway.app`
-- **Fix Railway auto-deploy** -- GitHub App permissions; manual redeploy needed until fixed
-- **Mount persistent volume** at `/app/backend/uploads` for file upload durability
+### Claude Can Handle
+- Run Playwright tests after client-side key refactor (may need selector updates for settings modal)
+- VectorStore ABC abstraction in `vector_service.py` — makes swapping Pinecone easier
 
-## Deployment
+## Cleanup Completed (this session)
 
-**Stack**: Dockerfile builder -> Python 3.11-slim + Node 20 -> builds React dist -> uv sync -> uvicorn with `--proxy-headers`
+- Removed `api_keys.py` route (server-side key storage deleted)
+- Removed `encryption_service.py` (Fernet encryption deleted)
+- Removed `APIKey` DB model
+- Updated all 6 docs (`README.md`, `AGENTS.md`, `ARCHITECTURE.md`, `QUICKSTART.md`, `.env.example`, `STATUS.md`) to remove stale encryption/key references
+- Fixed `Sidebar.tsx` hardcoded `'openai'` default (now uses first available LLM provider)
+- Fixed `MergeModal.tsx` hardcoded `'openai'` default (same fix)
+- Updated all model lists to current: Gemini 2.5, Claude 4.6, OpenAI o4-mini/o3
 
-**Required env vars**: `DATABASE_URL` (auto-injected by Railway PostgreSQL), `ALLOWED_ORIGINS`, `FERNET_KEY`
+## Deployment Reference
+
+**Stack**: Dockerfile → Python 3.11-slim + Node 20 → builds React dist → uv sync → uvicorn `--proxy-headers`
+
+**Required Railway env vars**: `DATABASE_URL` (auto-injected by PostgreSQL plugin), `ALLOWED_ORIGINS`
+
+**Not needed anymore**: `FERNET_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `PINECONE_API_KEY` (all browser-side)

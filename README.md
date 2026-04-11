@@ -87,8 +87,8 @@ Pinecone is required for merged-chat RAG (the core feature). Without it, merged 
 |  |   completions          |                      merged-chat RAG)|
 |  +-- /api/merge           +-- merge_service      (vector fusion) |
 |  +-- /api/attachments     +-- vector_service     (Pinecone ops)  |
-|  +-- /api/api-keys        +-- encryption_service (Fernet)        |
-|  +-- /health              +-- storage_service    (local files)   |
+|  +-- /api/models          +-- storage_service    (local files)   |
+|  +-- /health              +-- vector_service     (Pinecone ops)  |
 |                                                                   |
 |  Providers                                                        |
 |  +-- openai_provider.py    (GPT-4o, o-series)                    |
@@ -99,11 +99,10 @@ Pinecone is required for merged-chat RAG (the core feature). Without it, merged 
            v                           v
   +-----------------+       +-----------------------+
   |  SQLite / PG    |       |  Pinecone Serverless   |
-  |  (SQLAlchemy    |       |  (text-embedding-3-    |
-  |   async)        |       |   small, 1536-dim)     |
-  |                 |       |                         |
-  |  Chat, Message, |       |  1 namespace per chat   |
-  |  APIKey,        |       |  fuse_namespaces() for  |
+  |  (SQLAlchemy    |       |  OpenAI or Gemini emb.  |
+  |   async)        |       |  768-dim, 1 namespace   |
+  |                 |       |  per chat               |
+  |  Chat, Message, |       |  fuse_namespaces() for  |
   |  Attachment,    |       |  merged chats           |
   |  MergeHistory   |       |                         |
   +-----------------+       +-----------------------+
@@ -117,7 +116,7 @@ chat-merge-app/
 │   ├── main.py               # FastAPI app, CORS, static serving, startup
 │   └── app/
 │       ├── database.py       # SQLAlchemy async — SQLite or PostgreSQL
-│       ├── models.py         # Chat, Message, Attachment, APIKey, MergeHistory
+│       ├── models.py         # Chat, Message, Attachment, MergeHistory
 │       ├── schemas.py        # Pydantic request/response models
 │       ├── providers/
 │       │   ├── base.py       # Abstract BaseProvider + StreamChunk
@@ -128,15 +127,13 @@ chat-merge-app/
 │       │   ├── chats.py      # CRUD: /api/chats
 │       │   ├── messages.py   # Streaming: /api/chats/{id}/completions
 │       │   ├── attachments.py # Files: /api/attachments
-│       │   ├── api_keys.py   # Keys: /api/api-keys
-│       │   └── merge.py      # Merge: /api/merge
+│       │   └── merge.py      # Merge: /api/merge + /api/models
 │       └── services/
 │           ├── chat_service.py       # CRUD operations
 │           ├── completion_service.py # Streaming + RAG context building
 │           ├── merge_service.py      # Full-context merge + vector merging
-│           ├── vector_service.py     # Pinecone RAG (opt-in)
-│           ├── storage_service.py    # Local file storage (Railway volume in prod)
-│           └── encryption_service.py # Fernet key encryption
+│           ├── vector_service.py     # Pinecone RAG; OpenAI/Gemini embeddings
+│           └── storage_service.py    # Local file storage (Railway volume in prod)
 ├── frontend/
 │   └── src/
 │       ├── api.ts            # API client with SSE streaming
@@ -212,13 +209,8 @@ Railway runs the app as a **persistent process** — ideal for FastAPI with SSE 
 4. **Set environment variables** in Railway project → Variables:
    ```
    ALLOWED_ORIGINS=https://your-app.up.railway.app
-   FERNET_KEY=<generate once with the command below>
    ```
-   Generate a stable Fernet key once:
-   ```bash
-   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-   ```
-   **Critical**: Without `FERNET_KEY`, every redeploy generates a new encryption key and all previously-stored API keys become unreadable. LLM and Pinecone API keys are optional at the server level — users set their own keys through the Settings UI.
+   API keys (OpenAI, Anthropic, Gemini, Pinecone) are **not** server-side env vars — users enter them in the Settings UI and they stay in the browser. The server never stores them.
 
 5. **Get your URL** — Railway assigns `https://your-app.up.railway.app`. Set that as `ALLOWED_ORIGINS` above.
 
@@ -254,11 +246,9 @@ healthcheckPath = "/health"
 | POST | `/api/attachments` | Upload files (multipart/form-data) |
 | GET | `/api/attachments/{id}` | Download attachment |
 | DELETE | `/api/attachments/{id}` | Delete attachment |
-| GET | `/api/api-keys` | List configured providers |
-| POST | `/api/api-keys` | Save API key |
-| DELETE | `/api/api-keys/{id}` | Remove API key |
-| POST | `/api/merge` | Merge chats (SSE streaming) |
-| GET | `/health` | Health check with feature status |
+| POST | `/api/merge` | Merge chats (SSE streaming); include API keys as `x-*-key` headers |
+| GET | `/api/models` | Available models per provider |
+| GET | `/health` | Liveness check |
 
 ---
 
@@ -274,16 +264,13 @@ healthcheckPath = "/health"
 → Check file type (images, PDFs, text files supported). Max 10MB per file.
 
 **RAG not working after merge**
-→ Set `PINECONE_API_KEY`. Without it, merge falls back to simple vector union (no nearest-neighbor fusion). The merge modal shows a green "Smart fusion enabled" banner when Pinecone is configured.
+→ Open Settings and add both a Pinecone key AND either an OpenAI or Gemini key. Both are required for embeddings. The merge modal shows a yellow warning when RAG isn't configured. Pinecone index dimension must be 768 — delete and recreate if you had a previous 1536-dim index.
 
 **Merged chat not responding**
 → Ensure you chose a real LLM provider (OpenAI/Anthropic/Gemini) as the merge model — Pinecone (RAG) is not a chat provider.
 
 **Database errors on first run**
 → Tables are created automatically on startup. If you see schema errors, delete `chat_app.db` (SQLite) or drop and recreate tables.
-
-**Stored API keys unreadable after Railway redeploy**
-→ Set `FERNET_KEY` as a Railway env var. Without it, each redeploy generates a new encryption key and orphans previously-encrypted data.
 
 **Gemini 404 NOT_FOUND**
 → Google periodically sunsets older model IDs. Keep `backend/app/providers/gemini_provider.py` `AVAILABLE_MODELS` and `frontend/src/types.ts` `PROVIDER_MODELS.gemini` in sync with current model IDs from Google AI Studio.
@@ -292,9 +279,9 @@ healthcheckPath = "/health"
 
 ## Tech Stack
 
-- **Backend**: Python 3.11, FastAPI, SQLAlchemy 2.0 async, Fernet encryption
+- **Backend**: Python 3.11, FastAPI, SQLAlchemy 2.0 async
 - **Database**: SQLite (local) / PostgreSQL via asyncpg (production)
-- **Vector Store**: Pinecone serverless with OpenAI text-embedding-3-small
+- **Vector Store**: Pinecone serverless, 768-dim (OpenAI text-embedding-3-small or Gemini text-embedding-004)
 - **File Storage**: Local filesystem (Railway persistent volume in production)
 - **Frontend**: React 18, TypeScript, Vite, Zustand, Lucide icons
 - **Streaming**: Server-Sent Events (SSE) with manual formatting

@@ -18,15 +18,16 @@ function Sidebar() {
     toggleMergeSelect,
   } = useStore();
 
+  const firstProvider = Object.keys(LLM_PROVIDER_LABELS)[0];
   const [showNewChatForm, setShowNewChatForm] = useState(false);
-  const [newChatProvider, setNewChatProvider] = useState('openai');
-  const [newChatModel, setNewChatModel] = useState('gpt-4o');
+  const [newChatProvider, setNewChatProvider] = useState(firstProvider);
+  const [newChatModel, setNewChatModel] = useState(PROVIDER_MODELS[firstProvider][0]);
 
   const handleCreateChat = async () => {
     await createChat(newChatProvider, newChatModel);
     setShowNewChatForm(false);
-    setNewChatProvider('openai');
-    setNewChatModel('gpt-4o');
+    setNewChatProvider(firstProvider);
+    setNewChatModel(PROVIDER_MODELS[firstProvider][0]);
   };
 
   const handleChatItemClick = (e: React.MouseEvent, chatId: string) => {

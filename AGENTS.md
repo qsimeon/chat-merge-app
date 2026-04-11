@@ -85,33 +85,39 @@ python3 tests/playwright_full_test.py
 
 3. Add models to `frontend/src/types.ts` in `PROVIDER_MODELS` and `LLM_PROVIDER_LABELS` (NOT `PROVIDER_LABELS` — that one includes Pinecone and is only for the Settings modal). Keep both frontend and backend model lists in sync.
 
+## API Key Architecture (Client-Side)
+
+**API keys are stored in the browser (`localStorage`), not the server.** They are sent as request headers on streaming calls only — never persisted server-side.
+
+| localStorage key | Header sent | Purpose |
+|------------------|-------------|---------|
+| `chatmerge_key_openai` | `x-openai-key` | OpenAI chat + embeddings |
+| `chatmerge_key_anthropic` | `x-anthropic-key` | Anthropic chat |
+| `chatmerge_key_gemini` | `x-google-key` | Gemini chat + embeddings |
+| `chatmerge_key_pinecone` | `x-pinecone-key` | Vector store (RAG) |
+
+RAG is enabled when `pinecone` + (`openai` OR `gemini`) keys are present. Embeddings use `text-embedding-3-small` (OpenAI, 768-dim) or `text-embedding-004` (Gemini v1 API, 768-dim).
+
 ## Database Schema
 
 ```
 Chat: id, title, provider, model, system_prompt, is_merged, created_at, updated_at
   └── Message: id, chat_id, role, content, created_at
         └── Attachment: id, message_id, file_name, file_type, file_size, storage_path, created_at
-APIKey: id, provider (unique), encrypted_key, is_active
 MergeHistory: id, source_chat_ids (JSON), merged_chat_id, merge_model
 ```
 
 - `Chat.is_merged` — set `True` for merged chats; drives always-RAG context path in completion_service
-- `Message.reasoning_trace` column was removed from the active schema
 - `Attachment.storage_path` points to `backend/uploads/{uuid}` (local or Railway persistent volume)
 
-Never store API keys in plaintext — always use `encryption_service.encrypt_key()` before saving.
+## Environment Variables (Server-Side Only)
 
-## Environment Variables
+Only infrastructure variables are server-side. Provider API keys are browser-only.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `OPENAI_API_KEY` | One of these required | OpenAI API key |
-| `ANTHROPIC_API_KEY` | One of these required | Anthropic API key |
-| `GOOGLE_API_KEY` | One of these required | Google Gemini API key |
-| `PINECONE_API_KEY` | Optional | Enables RAG vector retrieval |
 | `DATABASE_URL` | Optional | PostgreSQL URL (defaults to SQLite) |
 | `ALLOWED_ORIGINS` | Optional | CORS origins (defaults to `*` for dev) |
-| `FERNET_KEY` | **Required in production** | Fernet encryption key for stored API keys. Without this, each Railway redeploy generates a new key and all stored API keys become unreadable. Generate once: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
 
 ## Current Model Lists (keep frontend/backend in sync)
 
