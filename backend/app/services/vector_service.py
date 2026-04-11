@@ -47,16 +47,28 @@ def _get_openai_client(openai_key: str) -> AsyncOpenAI:
     return _openai_client_cache[openai_key]
 
 
-def _get_gemini_client(gemini_key: str):
-    if gemini_key not in _gemini_client_cache:
-        from google import genai
-        # text-embedding-004 is only available on the stable v1 API, not v1beta
-        # (chat models use v1beta which is the SDK default)
-        _gemini_client_cache[gemini_key] = genai.Client(
-            api_key=gemini_key,
-            http_options={"api_version": "v1"},
+async def _embed_text_gemini_rest(text: str, gemini_key: str) -> List[float]:
+    """
+    Call text-embedding-004 via direct REST to the embedContent endpoint.
+
+    The google-genai SDK's embed_content() internally calls batchEmbedContents,
+    but text-embedding-004 only supports embedContent (singular). Bypassing the
+    SDK avoids this mismatch entirely.
+    """
+    import httpx
+    url = "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            url,
+            params={"key": gemini_key},
+            json={
+                "model": "models/text-embedding-004",
+                "content": {"parts": [{"text": text}]},
+            },
         )
-    return _gemini_client_cache[gemini_key]
+        response.raise_for_status()
+        data = response.json()
+        return data["embedding"]["values"]
 
 
 def is_configured() -> bool:
@@ -109,18 +121,9 @@ async def embed_text(
         )
         return response.data[0].embedding
     elif gemini_key:
-        client = _get_gemini_client(gemini_key)
-        result = await client.aio.models.embed_content(
-            model=EMBEDDING_MODEL_GEMINI,
-            contents=text,
-        )
-        # google-genai SDK returns embeddings (plural list) for embed_content
-        if hasattr(result, "embeddings") and result.embeddings:
-            return list(result.embeddings[0].values)
-        elif hasattr(result, "embedding") and result.embedding:
-            return list(result.embedding.values)
-        else:
-            raise ValueError(f"Unexpected embed_content response structure: {result}")
+        # Call embedContent REST endpoint directly — the SDK uses batchEmbedContents
+        # which text-embedding-004 doesn't support.
+        return await _embed_text_gemini_rest(text, gemini_key)
     else:
         raise ValueError("embed_text: neither openai_key nor gemini_key provided")
 
