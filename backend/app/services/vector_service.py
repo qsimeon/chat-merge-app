@@ -50,7 +50,12 @@ def _get_openai_client(openai_key: str) -> AsyncOpenAI:
 def _get_gemini_client(gemini_key: str):
     if gemini_key not in _gemini_client_cache:
         from google import genai
-        _gemini_client_cache[gemini_key] = genai.Client(api_key=gemini_key)
+        # text-embedding-004 is only available on the stable v1 API, not v1beta
+        # (chat models use v1beta which is the SDK default)
+        _gemini_client_cache[gemini_key] = genai.Client(
+            api_key=gemini_key,
+            http_options={"api_version": "v1"},
+        )
     return _gemini_client_cache[gemini_key]
 
 
