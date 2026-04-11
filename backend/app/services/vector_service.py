@@ -22,7 +22,7 @@ from pinecone import Pinecone, ServerlessSpec
 logger = logging.getLogger(__name__)
 
 EMBEDDING_MODEL_OPENAI = "text-embedding-3-small"
-EMBEDDING_MODEL_GEMINI = "text-embedding-004"  # no "models/" prefix in google-genai SDK
+EMBEDDING_MODEL_GEMINI = "embedding-001"  # universally available; 768-dim, same as text-embedding-004
 EMBEDDING_DIMENSION = 768   # unified: OpenAI with dimensions=768, Gemini natively 768
 INDEX_NAME = "chatmerge"
 
@@ -49,21 +49,22 @@ def _get_openai_client(openai_key: str) -> AsyncOpenAI:
 
 async def _embed_text_gemini_rest(text: str, gemini_key: str) -> List[float]:
     """
-    Call text-embedding-004 via direct REST to the embedContent endpoint.
+    Call Gemini embedContent REST endpoint directly.
 
-    The google-genai SDK's embed_content() internally calls batchEmbedContents,
-    but text-embedding-004 only supports embedContent (singular). Bypassing the
-    SDK avoids this mismatch entirely.
+    Uses embedding-001 (768-dim, universally available with any Gemini API key).
+    text-embedding-004 returns 404 for many keys despite being nominally available;
+    embedding-001 is the safe fallback and produces identical 768-dim output.
     """
     import httpx
-    url = "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{EMBEDDING_MODEL_GEMINI}:embedContent"
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(
             url,
             params={"key": gemini_key},
             json={
-                "model": "models/text-embedding-004",
+                "model": f"models/{EMBEDDING_MODEL_GEMINI}",
                 "content": {"parts": [{"text": text}]},
+                "taskType": "RETRIEVAL_DOCUMENT",
             },
         )
         response.raise_for_status()
