@@ -64,10 +64,11 @@ async def _embed_text_gemini_rest(text: str, gemini_key: str) -> List[float]:
             json={
                 "model": f"models/{EMBEDDING_MODEL_GEMINI}",
                 "content": {"parts": [{"text": text}]},
-                "taskType": "RETRIEVAL_DOCUMENT",
             },
         )
-        response.raise_for_status()
+        if not response.is_success:
+            logger.error(f"Gemini embedding HTTP {response.status_code}: {response.text[:300]}")
+            response.raise_for_status()
         data = response.json()
         return data["embedding"]["values"]
 
