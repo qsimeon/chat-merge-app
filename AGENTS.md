@@ -96,7 +96,7 @@ python3 tests/playwright_full_test.py
 | `chatmerge_key_gemini` | `x-google-key` | Gemini chat + embeddings |
 | `chatmerge_key_pinecone` | `x-pinecone-key` | Vector store (RAG) |
 
-RAG is enabled when `pinecone` + (`openai` OR `gemini`) keys are present. Embeddings use `text-embedding-3-small` (OpenAI, 768-dim) or `text-embedding-004` (Gemini v1 API, 768-dim).
+RAG is enabled when `pinecone` + (`openai` OR `gemini`) keys are present. Embeddings use `text-embedding-3-small` (OpenAI, 768-dim) or `gemini-embedding-001` via REST `embedContent` (Gemini, 768-dim with `outputDimensionality=768`).
 
 ## Database Schema
 

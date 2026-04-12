@@ -13,7 +13,7 @@ People constantly have great conversations across different AI systems — deep 
 - **RAG-powered merged chats**: Every query in a merged chat retrieves the most relevant context from the fused vector store via Pinecone — no context-window explosions, scales to conversations of any length
 - **File & image uploads**: Drag-and-drop, paste, or pick files. Images sent natively to provider vision APIs
 - **Streaming responses**: Real-time SSE streaming for all providers
-- **Encrypted API keys**: Keys stored encrypted with Fernet, never logged
+- **Browser-side API keys**: Keys stored in `localStorage`, sent as request headers — never persisted server-side
 
 ---
 

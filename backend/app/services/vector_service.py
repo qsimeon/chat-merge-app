@@ -1,16 +1,16 @@
 """
 Vector store service for RAG-based context retrieval.
 
-Uses Pinecone for serverless vector storage and OpenAI or Google Gemini embeddings.
-Each chat gets its own namespace for vector isolation.
+Uses Pinecone for serverless vector storage with OpenAI or Google Gemini embeddings.
+Each chat gets its own Pinecone namespace for isolation.
 
 Embedding providers (tried in order):
-  1. OpenAI text-embedding-3-small  (768-dim with dimension reduction)
-  2. Google text-embedding-004       (768-dim native)
+  1. OpenAI  — text-embedding-3-small, outputDimensionality=768
+  2. Gemini  — gemini-embedding-001 via REST embedContent, outputDimensionality=768
 
-Both produce 768-dim vectors and share the same Pinecone index.
-Keys are user-provided (stored encrypted in DB), not env vars.
-All public functions accept pinecone_key, openai_key, gemini_key as explicit params.
+Both produce 768-dim vectors stored in the same Pinecone index ("chatmerge").
+Keys come from request headers (x-openai-key / x-google-key / x-pinecone-key),
+not from server env vars or DB. All public functions accept them as explicit params.
 """
 
 import logging
@@ -29,7 +29,6 @@ INDEX_NAME = "chatmerge"
 # Per-key client caches (avoids recreating connections on every call)
 _pinecone_index_cache: Dict[str, Any] = {}
 _openai_client_cache: Dict[str, AsyncOpenAI] = {}
-_gemini_client_cache: Dict[str, Any] = {}
 # Track which Pinecone keys have had their index verified
 _index_verified: set = set()
 
@@ -49,11 +48,14 @@ def _get_openai_client(openai_key: str) -> AsyncOpenAI:
 
 async def _embed_text_gemini_rest(text: str, gemini_key: str) -> List[float]:
     """
-    Call Gemini embedContent REST endpoint directly.
+    Embed text via the Gemini embedContent REST endpoint.
 
-    Uses embedding-001 (768-dim, universally available with any Gemini API key).
-    text-embedding-004 returns 404 for many keys despite being nominally available;
-    embedding-001 is the safe fallback and produces identical 768-dim output.
+    Uses gemini-embedding-001 which natively outputs 3072-dim vectors but
+    supports outputDimensionality to reduce to 768 (matching our Pinecone index).
+
+    NOTE: The google-genai SDK embed_content() method calls batchEmbedContents
+    internally, which gemini-embedding-001 does not support. We call embedContent
+    directly via httpx to use the correct single-document endpoint.
     """
     import httpx
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{EMBEDDING_MODEL_GEMINI}:embedContent"
@@ -111,9 +113,9 @@ async def embed_text(
     """
     Embed text using OpenAI (preferred) or Gemini (fallback).
 
-    Both providers produce 768-dim vectors compatible with the same Pinecone index:
-    - OpenAI text-embedding-3-small with dimensions=768
-    - Google text-embedding-004 (natively 768-dim)
+    Both produce 768-dim vectors compatible with the same Pinecone index:
+    - OpenAI  text-embedding-3-small with dimensions=768
+    - Gemini  gemini-embedding-001 via REST with outputDimensionality=768
     """
     if openai_key:
         client = _get_openai_client(openai_key)
@@ -124,8 +126,6 @@ async def embed_text(
         )
         return response.data[0].embedding
     elif gemini_key:
-        # Call embedContent REST endpoint directly — the SDK uses batchEmbedContents
-        # which text-embedding-004 doesn't support.
         return await _embed_text_gemini_rest(text, gemini_key)
     else:
         raise ValueError("embed_text: neither openai_key nor gemini_key provided")
