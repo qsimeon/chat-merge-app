@@ -47,23 +47,19 @@ npm run dev  # Dev server on :5173, proxies API to :8000
 
 ## Configuration
 
-Copy `backend/.env.example` to `backend/.env` and fill in your keys:
+**API keys are browser-side** — you enter them in the Settings modal (⚙ gear icon), not in `.env`. They are stored in `localStorage` and sent as request headers on each API call. The server never stores them.
+
+The only server-side config is optional infrastructure:
 
 ```env
-# Required: at least one AI provider key
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
-GOOGLE_API_KEY=...
+# Optional: PostgreSQL for production (Railway injects DATABASE_URL automatically)
+# DATABASE_URL=postgresql://user:pass@host/dbname
 
-# Optional: enable RAG vector retrieval for merged chats
-PINECONE_API_KEY=...
-
-# Optional: cloud database (defaults to local SQLite)
-DATABASE_URL=postgresql://user:pass@host/dbname
-
+# Optional: lock CORS to your domain in production
+# ALLOWED_ORIGINS=https://your-app.up.railway.app
 ```
 
-Pinecone is required for merged-chat RAG (the core feature). Without it, merged chats fall back to simple vector union. The cloud DB is optional (SQLite is the default).
+Copy `backend/.env.example` to `backend/.env` for local overrides. SQLite is the default database — no setup required for local dev.
 
 ---
 
@@ -88,7 +84,7 @@ Pinecone is required for merged-chat RAG (the core feature). Without it, merged 
 |  +-- /api/merge           +-- merge_service      (vector fusion) |
 |  +-- /api/attachments     +-- vector_service     (Pinecone ops)  |
 |  +-- /api/models          +-- storage_service    (local files)   |
-|  +-- /health              +-- vector_service     (Pinecone ops)  |
+|  +-- /health                                                      |
 |                                                                   |
 |  Providers                                                        |
 |  +-- openai_provider.py    (GPT-4o, o-series)                    |
@@ -281,7 +277,7 @@ healthcheckPath = "/health"
 
 - **Backend**: Python 3.11, FastAPI, SQLAlchemy 2.0 async
 - **Database**: SQLite (local) / PostgreSQL via asyncpg (production)
-- **Vector Store**: Pinecone serverless, 768-dim (OpenAI text-embedding-3-small or Gemini text-embedding-004)
+- **Vector Store**: Pinecone serverless, 768-dim (OpenAI `text-embedding-3-small` or Gemini `gemini-embedding-001`)
 - **File Storage**: Local filesystem (Railway persistent volume in production)
 - **Frontend**: React 18, TypeScript, Vite, Zustand, Lucide icons
 - **Streaming**: Server-Sent Events (SSE) with manual formatting

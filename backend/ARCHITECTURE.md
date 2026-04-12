@@ -106,7 +106,7 @@ async with async_session() as session:
 
 #### vector_service.py — Pinecone RAG
 
-**`store_message_vector()`**: Embeds message content with `text-embedding-3-small`, upserts to chat's Pinecone namespace. Fire-and-forget via `asyncio.create_task()`.
+**`store_message_vector()`**: Embeds message content (OpenAI `text-embedding-3-small` or Gemini `gemini-embedding-001`, both 768-dim), upserts to chat's Pinecone namespace. Fire-and-forget via `asyncio.create_task()`.
 
 **`fuse_namespaces(source_ids, target_id, ...)`**: The innovation —
 ```
@@ -205,11 +205,11 @@ POST /api/chats/{merged_id}/completions {content: "Who am I?"}
 
 ## Security
 
-1. **API Keys**: Encrypted at rest via Fernet; never logged or returned in API responses
+1. **API Keys**: Stored in browser `localStorage` only; sent as request headers (`x-openai-key`, `x-anthropic-key`, `x-google-key`, `x-pinecone-key`). The server reads them per-request and never persists them.
 2. **CORS**: Permissive in dev (`*`); set `ALLOWED_ORIGINS` in production
 3. **SQL Injection**: Protected by SQLAlchemy ORM parameterized queries
 4. **Validation**: Pydantic schemas validate all request inputs
-5. **File uploads**: Stored with UUID filenames; served only via authenticated endpoint
+5. **File uploads**: Stored with UUID filenames; served only via the `/api/attachments/{id}` endpoint
 
 ## Performance
 
