@@ -10,7 +10,7 @@ This file provides guidance to AI coding agents (Claude Code, Cursor, Copilot, e
 
 ### Backend (Python/FastAPI)
 - **Entry**: `backend/main.py` — FastAPI app, CORS, startup hooks
-- **Routes**: `backend/app/routes/` — one file per resource (chats, messages, attachments, api_keys, merge)
+- **Routes**: `backend/app/routes/` — one file per resource (chats, messages, attachments, merge)
 - **Services**: `backend/app/services/` — business logic layer
 - **Providers**: `backend/app/providers/` — one file per AI provider
 - **Models**: `backend/app/models.py` — SQLAlchemy ORM models
@@ -33,7 +33,7 @@ This file provides guidance to AI coding agents (Claude Code, Cursor, Copilot, e
 
 5. **Vector storage is fire-and-forget**: `asyncio.create_task(vector_service.store_message_vector(...))` — failures are logged but never block message creation.
 
-6. **RAG check before Pinecone ops**: Call `vector_service.is_configured()` before any Pinecone operations. App works without Pinecone (falls back to simple union merge).
+6. **RAG availability check**: `rag_available = bool(pinecone_key and (openai_key or gemini_key))` — computed from request headers in each streaming handler. App works without Pinecone (merge falls back to simple union).
 
 7. **Merged chats have `is_merged=True` and zero copied messages**: Context comes entirely from the fused Pinecone namespace via RAG. Never copy source messages into a merged chat.
 

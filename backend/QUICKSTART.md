@@ -39,13 +39,15 @@ Visit `http://localhost:8000/docs` for interactive API docs (Swagger UI)
 
 ### Create a Chat
 
+Use any provider you have a key for (`openai`, `anthropic`, or `gemini`):
+
 ```bash
 CHAT_ID=$(curl -s -X POST http://localhost:8000/api/chats/ \
   -H "Content-Type: application/json" \
   -d '{
     "title": "My Chat",
-    "provider": "openai",
-    "model": "gpt-4o"
+    "provider": "gemini",
+    "model": "gemini-2.0-flash"
   }' | jq -r '.id')
 
 echo $CHAT_ID
@@ -53,9 +55,13 @@ echo $CHAT_ID
 
 ### Send a Message & Get Response
 
+Keys must be sent as headers (they are browser-side, not in `.env`):
+
 ```bash
 curl -N http://localhost:8000/api/chats/$CHAT_ID/completions \
   -H "Content-Type: application/json" \
+  -H "x-google-key: YOUR_GEMINI_KEY" \
+  -H "x-pinecone-key: YOUR_PINECONE_KEY" \
   -d '{"content": "What is Python?"}'
 ```
 
@@ -84,37 +90,25 @@ Keys are browser-only. Open the app in your browser → gear icon → Settings �
 ### Create Multiple Chats
 
 ```bash
-# Create chat 1
 CHAT1=$(curl -s -X POST http://localhost:8000/api/chats/ \
   -H "Content-Type: application/json" \
-  -d '{
-    "title": "Chat 1",
-    "provider": "openai",
-    "model": "gpt-4o"
-  }' | jq -r '.id')
+  -d '{"title":"Chat 1","provider":"gemini","model":"gemini-2.0-flash"}' | jq -r '.id')
 
-# Create chat 2
 CHAT2=$(curl -s -X POST http://localhost:8000/api/chats/ \
   -H "Content-Type: application/json" \
-  -d '{
-    "title": "Chat 2",
-    "provider": "openai",
-    "model": "gpt-4o"
-  }' | jq -r '.id')
+  -d '{"title":"Chat 2","provider":"anthropic","model":"claude-haiku-4-5-20251001"}' | jq -r '.id')
 ```
 
 ### Add Some Messages
 
+Pass your keys as headers on completion requests:
+
 ```bash
-# Chat 1
 curl -N http://localhost:8000/api/chats/$CHAT1/completions \
   -H "Content-Type: application/json" \
+  -H "x-google-key: YOUR_GEMINI_KEY" \
+  -H "x-pinecone-key: YOUR_PINECONE_KEY" \
   -d '{"content": "What is machine learning?"}'
-
-# Chat 2
-curl -N http://localhost:8000/api/chats/$CHAT2/completions \
-  -H "Content-Type: application/json" \
-  -d '{"content": "Explain neural networks"}'
 ```
 
 ### Merge Them
@@ -122,10 +116,12 @@ curl -N http://localhost:8000/api/chats/$CHAT2/completions \
 ```bash
 curl -N http://localhost:8000/api/merge \
   -H "Content-Type: application/json" \
+  -H "x-google-key: YOUR_GEMINI_KEY" \
+  -H "x-pinecone-key: YOUR_PINECONE_KEY" \
   -d '{
     "chat_ids": ["'$CHAT1'", "'$CHAT2'"],
-    "merge_provider": "openai",
-    "merge_model": "gpt-4o"
+    "merge_provider": "gemini",
+    "merge_model": "gemini-2.0-flash"
   }'
 ```
 
@@ -140,9 +136,9 @@ curl http://localhost:8000/api/models | jq
 Response:
 ```json
 {
-  "openai": ["gpt-4o", "gpt-4o-mini", ...],
-  "anthropic": ["claude-sonnet-4-20250514", ...],
-  "gemini": ["gemini-2.0-flash", ...]
+  "openai": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o4-mini", "o3", "o3-mini"],
+  "anthropic": ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5-20251001"],
+  "gemini": ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"]
 }
 ```
 
