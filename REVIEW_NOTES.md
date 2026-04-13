@@ -1,27 +1,31 @@
 # REVIEW_NOTES — chat-merge-app
 Date: 2026-04-13
-Iteration goal: First run — deeply understand the project and create RALPH.md
+Iteration goal: Add backend unit test suite and Playwright test infrastructure
 Outcome: ✅ achieved
 
 ## Work done
-- Explored full codebase: AGENTS.md, README.md, CLAUDE.md, backend/main.py, all services, routes, providers, models, frontend store, types, API client, components
-- Reviewed git history (20 commits back), Dockerfile, railway.toml, and the single Playwright test file
-- Created RALPH.md with: Project Goal, Deliverable type, Audience, Success Criteria, Design Philosophy, Constraints, Current State (95%), Human Actions Needed, Codex Delegation Guide, Iteration Log
+- Added `pytest>=8.0.0` and `pytest-asyncio>=0.23.0` to `backend/pyproject.toml`
+- Added `[tool.pytest.ini_options]` with `asyncio_mode = "auto"`, `testpaths = ["tests"]`
+- Created `backend/tests/conftest.py`: in-memory SQLite async fixtures + `httpx.AsyncClient` test client (overrides per-router `get_db` dependencies)
+- Created `backend/tests/test_chat_service.py`: 8 async service-layer tests (CRUD: chats, messages)
+- Created `backend/tests/test_vector_service.py`: 7 tests for graceful degradation without API keys + mocked fuse_namespaces empty-namespace case
+- Created `backend/tests/test_api_chats.py`: 5 HTTP-level route tests via AsyncClient
+- Created `tests/conftest.py`: documentation conftest for Playwright tests (two-server requirement)
+- All 20 tests pass in 0.68s with zero real API calls
 
 ## Blockers
-None — first-run orientation completed successfully.
+None.
 
-## Next iteration: Add test infrastructure and write backend unit tests
-The biggest gap is test coverage. Specifically:
+## Next iteration: Add merge service tests + Playwright e2e smoke test
+The test suite covers CRUD and vector service, but the **merge flow** has no test coverage yet.
 
-1. **Create `frontend/playwright.config.ts`** — currently missing; Playwright tests can't run without it
-2. **Verify + update `tests/playwright_full_test.py`** — check if tests still reflect current app behavior (Settings UI, merge flow, RAG toggle)
-3. **Add `backend/tests/` directory with pytest unit tests** covering:
-   - `chat_service.py` (CRUD operations)
-   - `completion_service.py` (message history building, RAG context building)
-   - `merge_service.py` (merge logic, vector fusion)
-   - `vector_service.py` (is_configured check, graceful degradation)
+Concrete goals:
+1. **`backend/tests/test_merge_service.py`** — unit tests for `_summarize_conversation`, and mock-based tests for `merge_chats` generator (test that it yields StreamChunk events, creates an empty merged chat, records MergeHistory). Use `unittest.mock` to mock `vector_service.fuse_namespaces` and the provider.
+2. **`backend/tests/test_completion_service.py`** — test `_build_message_history` (system role conversion, attachment handling), `_build_merged_chat_context` (mock vector_service.query_relevant_context to return 0 results → no hallucination).
+3. **Playwright smoke test**: Verify the existing `tests/playwright_full_test.py` still runs cleanly by:
+   - Installing playwright chromium: `playwright install chromium`
+   - Starting both servers: `./start.sh`
+   - Running: `pytest tests/playwright_full_test.py -v --timeout=120`
+   - Document which tests pass and which need updating
 
-Start with `playwright.config.ts` and run the existing Playwright test to see what passes/fails. Then use `/codex:rescue` to fix failures and add backend unit tests.
-
-Completion: 95%
+Completion: 96%
